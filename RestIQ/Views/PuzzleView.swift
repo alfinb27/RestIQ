@@ -18,6 +18,10 @@ struct PuzzleView: View {
 
     @State private var regionColorMap: [Int: Color] = [:]
 
+    private var isPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+
     init(level: String) {
         self.level = level
         var size = 6
@@ -38,13 +42,13 @@ struct PuzzleView: View {
         ZStack {
             Color(.systemGray6).ignoresSafeArea()
 
-            VStack(spacing: 12) {
+            VStack(spacing: isPad ? 20 : 12) {
                 headerView
                 gridView
                 controlView
-                Spacer()
+                Spacer(minLength: isPad ? 60 : 20)
             }
-            .padding(.top)
+            .padding(.top, isPad ? 40 : 16)
             .onAppear { buildRegionColorMap() }
             .alert("Puzzle Completed!", isPresented: $showCompletion) {
                 Button("OK", role: .cancel) {}
@@ -60,13 +64,13 @@ struct PuzzleView: View {
     private var headerView: some View {
         HStack {
             Label("\(formattedTime())", systemImage: "clock")
-                .font(.subheadline)
+                .font(.system(size: isPad ? 22 : 16))
                 .foregroundColor(.secondary)
 
             Spacer()
 
             Text("Difficulty \(level.uppercased())")
-                .font(.caption)
+                .font(.system(size: isPad ? 16 : 12))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(Color.gray.opacity(0.15))
@@ -78,11 +82,11 @@ struct PuzzleView: View {
                 engine.resetBoard()
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.title3)
+                    .font(.system(size: isPad ? 24 : 18))
                     .foregroundColor(.secondary)
             }
         }
-        .padding(.horizontal)
+        .padding(.horizontal, isPad ? 100 : 20)
     }
 
     // MARK: - Grid
@@ -99,16 +103,16 @@ struct PuzzleView: View {
                         ZStack {
                             Rectangle()
                                 .fill(color)
-                                .overlay(lightGridLines(row: row, col: col)) // light separators
-                                .overlay(regionBorders(row: row, col: col))   // dark region borders
+                                .overlay(lightGridLines())
+                                .overlay(regionBorders(row: row, col: col))
 
                             if cell == .markedX {
                                 Text("×")
-                                    .font(.title3)
+                                    .font(.system(size: isPad ? 32 : 22))
                                     .foregroundColor(.gray)
                             } else if cell == .queen {
                                 Image(systemName: "crown.fill")
-                                    .font(.title3)
+                                    .font(.system(size: isPad ? 30 : 20))
                                     .foregroundColor(.yellow)
                                     .shadow(radius: 1)
                             }
@@ -130,7 +134,8 @@ struct PuzzleView: View {
         .aspectRatio(1, contentMode: .fit)
         .cornerRadius(12)
         .shadow(radius: 4)
-        .padding(.horizontal, 20)
+        .padding(.horizontal, isPad ? 100 : 20)
+        .frame(maxWidth: isPad ? 700 : .infinity)
     }
 
     // MARK: - Controls
@@ -143,8 +148,9 @@ struct PuzzleView: View {
                 startTimer()
             }
         }
+        .font(.system(size: isPad ? 20 : 16))
         .buttonStyle(.borderedProminent)
-        .padding(.top, 10)
+        .padding(.top, isPad ? 20 : 10)
     }
 
     // MARK: - Timer
@@ -194,7 +200,7 @@ struct PuzzleView: View {
     }
 
     // MARK: - Grid Lines
-    private func lightGridLines(row: Int, col: Int) -> some View {
+    private func lightGridLines() -> some View {
         Rectangle()
             .stroke(Color.black.opacity(1.0), lineWidth: 0.5) // subtle separators between all cells
     }
@@ -210,7 +216,7 @@ struct PuzzleView: View {
         if col < gridSize-1 && engine.regionMap[row][col+1] != current { right = true }
 
         return Rectangle()
-            .strokeBorder(Color.black.opacity(0.7), lineWidth: 2)
+            .strokeBorder(Color.black.opacity(0.7), lineWidth: isPad ? 3 : 2)
             .mask(
                 RegionBorderMask(top: top, bottom: bottom, left: left, right: right)
             )
@@ -234,6 +240,7 @@ private struct RegionBorderMask: Shape {
         return path
     }
 }
+
 
 #Preview("Easy") {
     NavigationStack {
