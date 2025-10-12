@@ -5,3 +5,47 @@ DerivedData/
 *.xcuserstate
 *.xcworkspace
 
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+*.xcuserdata/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+# Swift Package Manager
+/.build/
+/Packages/
+Package.pins
+Package.resolved
+
+# CocoaPods
+/Pods/
+Podfile.lock
+
+# Carthage
+/Carthage/Build/
+
+# Fastlane
+/fastlane/report.xml
+/fastlane/Preview.html
+/fastlane/screenshots/
+/fastlane/test_output/
+
+# macOS Files
+.DS_Store
+
+# User-specific Xcode files
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+
+# SwiftPM workspace data
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Archives
+*.xcarchive
+
+# Logs
+*.log
