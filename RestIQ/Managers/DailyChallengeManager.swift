@@ -7,6 +7,11 @@
 
 import Foundation
 
+struct Coord: Hashable {
+    let r: Int
+    let c: Int
+}
+
 class DailyChallengeManager {
     static let shared = DailyChallengeManager()
     private let calendar = Calendar.current
@@ -26,96 +31,173 @@ class DailyChallengeManager {
         default: baseSize = 6
         }
 
-        let seed = dailySeed() + baseSize
-        return generateSeededPuzzle(size: baseSize, seed: seed, level: level)
+        let seed = UInt64(abs(dailySeed() + baseSize))
+        let regionMap = generateRegionMap(size: baseSize, seed: seed)
+        return PuzzleEngine(size: baseSize, regionMap: regionMap)
     }
 
-    // MARK: - Region generation
-
-    private func generateRegionMap(size: Int, seed: UInt64, level: String) -> [[Int]] {
-        let (minRegionSize, maxRegionSize): (Int, Int)
-        switch level {
-        case "Easy":   (minRegionSize, maxRegionSize) = (2, 4)
-        case "Medium": (minRegionSize, maxRegionSize) = (2, 5)
-        case "Hard":   (minRegionSize, maxRegionSize) = (2, 6)
-        case "Expert": (minRegionSize, maxRegionSize) = (3, 6)
-        default:       (minRegionSize, maxRegionSize) = (2, 4)
-        }
-
+    // MARK: - Contiguous Region Generator (final)
+    private func generateRegionMap(size: Int, seed: UInt64) -> [[Int]] {
         var rng = SeededRandomNumberGenerator(seed: seed)
         var map = Array(repeating: Array(repeating: -1, count: size), count: size)
-        var nextRegionId = 0
+        let totalRegions = size
+        let totalCells = size * size
+        let targetRegionSize = totalCells / totalRegions
 
-        func neighbors(of r: Int, c: Int) -> [(Int,Int)] {
-            [(1,0),(-1,0),(0,1),(0,-1)]
-                .map { (r + $0.0, c + $0.1) }
-                .filter { $0.0 >= 0 && $0.0 < size && $0.1 >= 0 && $0.1 < size }
+        // Step 1: place N random seeds
+        var allCells = [Coord]()
+        for r in 0..<size { for c in 0..<size { allCells.append(Coord(r: r, c: c)) } }
+        allCells.shuffle(using: &rng)
+        let seeds = Array(allCells.prefix(totalRegions))
+        for (id, s) in seeds.enumerated() { map[s.r][s.c] = id }
+
+        // Step 2: fair round-robin growth
+        var regionCells: [Int: [Coord]] = [:]
+        for (id, coord) in seeds.enumerated() { regionCells[id] = [coord] }
+
+        var unfilled = Set(allCells.filter { !seeds.contains($0) })
+
+        while !unfilled.isEmpty {
+            for regionID in 0..<totalRegions {
+                guard let currentCells = regionCells[regionID],
+                      currentCells.count < targetRegionSize else { continue }
+
+                let frontier = currentCells
+                    .flatMap { neighbors(of: $0, size: size) }
+                    .filter { unfilled.contains($0) }
+
+                guard let next = frontier.randomElement(using: &rng) else { continue }
+
+                map[next.r][next.c] = regionID
+                regionCells[regionID, default: []].append(next)
+                unfilled.remove(next)
+
+                if unfilled.isEmpty { break }
+            }
+
+            if unfilled.count < size {
+                for cell in unfilled {
+                    let neighbors = self.neighbors(of: cell, size: size)
+                        .compactMap { map[$0.r][$0.c] }
+                    if let neighborID = neighbors.randomElement(using: &rng) {
+                        map[cell.r][cell.c] = neighborID
+                        regionCells[neighborID, default: []].append(cell)
+                    } else {
+                        let fallback = Int.random(in: 0..<totalRegions, using: &rng)
+                        map[cell.r][cell.c] = fallback
+                        regionCells[fallback, default: []].append(cell)
+                    }
+                }
+                unfilled.removeAll()
+            }
         }
 
-        // Coordinates shuffled deterministically
-        var all = [(Int,Int)]()
-        for r in 0..<size { for c in 0..<size { all.append((r,c)) } }
-        all.shuffle(using: &rng)
+        // Step 3–4
+        map = enforceConnectivity(map: map, totalRegions: totalRegions, size: size)
+        map = normalizeRegionCount(map: map, totalRegions: totalRegions, size: size)
+        return map
+    }
 
-        for (startR, startC) in all {
-            if map[startR][startC] != -1 { continue }
+    // MARK: - Helpers
+    private func neighbors(of cell: Coord, size: Int) -> [Coord] {
+        [(1,0),(-1,0),(0,1),(0,-1)]
+            .map { Coord(r: cell.r + $0.0, c: cell.c + $0.1) }
+            .filter { $0.r >= 0 && $0.r < size && $0.c >= 0 && $0.c < size }
+    }
 
-            nextRegionId += 1
-            let regionId = nextRegionId
-            let target = Int.random(in: minRegionSize...maxRegionSize, using: &rng)
+    private func countRegion(_ map: [[Int]], id: Int) -> Int {
+        map.flatMap { $0 }.filter { $0 == id }.count
+    }
 
-            var queue: [(Int,Int)] = [(startR,startC)]
-            var regionCells: [(Int,Int)] = [(startR,startC)]
-            map[startR][startC] = regionId
+    // MARK: - Connectivity
+    private func enforceConnectivity(map: [[Int]], totalRegions: Int, size: Int) -> [[Int]] {
+        var map = map
+        for regionID in 0..<totalRegions {
+            var visited = Set<Coord>()
+            var groups: [[Coord]] = []
 
-            while !queue.isEmpty && regionCells.count < target {
-                let (r,c) = queue.removeFirst()
-                var shuffled = neighbors(of: r, c: c)
-                shuffled.shuffle(using: &rng)
-                for (nr,nc) in shuffled where map[nr][nc] == -1 {
-                    map[nr][nc] = regionId
-                    regionCells.append((nr,nc))
-                    queue.append((nr,nc))
-                    if regionCells.count >= target { break }
+            for r in 0..<size {
+                for c in 0..<size where map[r][c] == regionID && !visited.contains(Coord(r: r, c: c)) {
+                    var queue = [Coord(r: r, c: c)]
+                    var group: [Coord] = []
+                    visited.insert(Coord(r: r, c: c))
+
+                    while !queue.isEmpty {
+                        let cur = queue.removeFirst()
+                        group.append(cur)
+                        for n in neighbors(of: cur, size: size)
+                        where map[n.r][n.c] == regionID && !visited.contains(n) {
+                            visited.insert(n)
+                            queue.append(n)
+                        }
+                    }
+                    groups.append(group)
+                }
+            }
+
+            // merge fragments
+            if groups.count > 1 {
+                let mainIndex = groups.indices.max(by: { groups[$0].count < groups[$1].count }) ?? 0
+                for (idx, group) in groups.enumerated() where idx != mainIndex {
+                    for cell in group {
+                        let neighbor = neighbors(of: cell, size: size)
+                            .compactMap { map[$0.r][$0.c] }
+                            .filter { $0 != regionID }
+                            .randomElement()
+                        map[cell.r][cell.c] = neighbor ?? regionID
+                    }
                 }
             }
         }
+        return map
+    }
 
-        // Fill any gaps with nearest region
-        for r in 0..<size {
-            for c in 0..<size where map[r][c] == -1 {
-                let neigh = neighbors(of: r, c: c)
-                    .compactMap { map[$0.0][$0.1] }
-                    .randomElement(using: &rng)
-                map[r][c] = neigh ?? (nextRegionId + 1)
+    // MARK: - Normalize Region Count
+    private func normalizeRegionCount(map: [[Int]], totalRegions: Int, size: Int) -> [[Int]] {
+        var map = map
+        var unique = Array(Set(map.flatMap { $0 })).sorted()
+
+        while unique.count > totalRegions {
+            if let smallest = unique.min(by: { countRegion(map, id: $0) < countRegion(map, id: $1) }) {
+                outer: for r in 0..<size {
+                    for c in 0..<size where map[r][c] == smallest {
+                        if let neighbor = neighbors(of: Coord(r: r, c: c), size: size)
+                            .compactMap({ map[$0.r][$0.c] })
+                            .filter({ $0 != smallest })
+                            .first {
+                            map[r][c] = neighbor
+                            break outer
+                        }
+                    }
+                }
             }
+            unique = Array(Set(map.flatMap { $0 })).sorted()
         }
 
-        // Normalize region IDs
-        let unique = Array(Set(map.flatMap { $0 })).sorted()
-        var remap = [Int:Int]()
-        for (newId, oldId) in unique.enumerated() { remap[oldId] = newId }
+        while unique.count < totalRegions {
+            if let largest = unique.max(by: { countRegion(map, id: $0) < countRegion(map, id: $1) }) {
+                var candidates = [Coord]()
+                for r in 0..<size {
+                    for c in 0..<size where map[r][c] == largest {
+                        candidates.append(Coord(r: r, c: c))
+                    }
+                }
+                guard candidates.count > 2 else { break }
+                let splitCount = candidates.count / 2
+                for cell in candidates.prefix(splitCount) {
+                    map[cell.r][cell.c] = unique.count
+                }
+            }
+            unique = Array(Set(map.flatMap { $0 })).sorted()
+        }
+
+        let remap = Dictionary(unique.enumerated().map { ($1, $0) },
+                               uniquingKeysWith: { first, _ in first })
         for r in 0..<size {
             for c in 0..<size {
                 map[r][c] = remap[map[r][c]] ?? 0
             }
         }
-
         return map
-    }
-
-    private func generateSeededPuzzle(size: Int, seed: Int, level: String) -> PuzzleEngine {
-        let regionMap = generateRegionMap(size: size, seed: UInt64(abs(seed)), level: level)
-        let engine = PuzzleEngine(size: size, regionMap: regionMap)
-
-        // Optional: deterministic prefill
-        var rng = SeededRandomNumberGenerator(seed: UInt64(abs(seed)) ^ 0x9E3779B97F4A7C15)
-        if Bool.random(using: &rng) {
-            let r = Int.random(in: 0..<size, using: &rng)
-            let c = Int.random(in: 0..<size, using: &rng)
-            engine.tapCell(row: r, col: c)
-        }
-
-        return engine
     }
 }

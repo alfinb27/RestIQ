@@ -20,6 +20,8 @@ final class PuzzleEngine: ObservableObject {
     let regionMap: [[Int]]
 
     init(size: Int, regionMap: [[Int]]) {
+        precondition(regionMap.count == size && regionMap.allSatisfy({ $0.count == size }),
+                     "Region map must match grid size.")
         self.size = size
         self.regionMap = regionMap
         self.board = Array(repeating: Array(repeating: .empty, count: size), count: size)
@@ -28,12 +30,9 @@ final class PuzzleEngine: ObservableObject {
     // MARK: - Tap Cycle
     func tapCell(row: Int, col: Int) {
         switch board[row][col] {
-        case .empty:
-            board[row][col] = .markedX
-        case .markedX:
-            board[row][col] = .queen
-        case .queen:
-            board[row][col] = .empty
+        case .empty: board[row][col] = .markedX
+        case .markedX: board[row][col] = .queen
+        case .queen: board[row][col] = .empty
         }
     }
 
@@ -41,32 +40,13 @@ final class PuzzleEngine: ObservableObject {
     func isValidPlacement(row: Int, col: Int) -> Bool {
         guard board[row][col] == .queen else { return true }
 
-        // Row and column check
+        // Row and Column uniqueness
         for i in 0..<size {
             if i != row && board[i][col] == .queen { return false }
             if i != col && board[row][i] == .queen { return false }
         }
 
-        // Diagonal check
-        for i in 0..<size {
-            let diff = abs(row - i)
-            if diff == 0 { continue }
-            if col + diff < size && board[i][col + diff] == .queen { return false }
-            if col - diff >= 0 && board[i][col - diff] == .queen { return false }
-        }
-
-        // Adjacent (no touching)
-        for dr in -1...1 {
-            for dc in -1...1 {
-                if dr == 0 && dc == 0 { continue }
-                let nr = row + dr, nc = col + dc
-                if nr >= 0, nr < size, nc >= 0, nc < size {
-                    if board[nr][nc] == .queen { return false }
-                }
-            }
-        }
-
-        // Region check — only one queen per region
+        // Region uniqueness
         let regionID = regionMap[row][col]
         for r in 0..<size {
             for c in 0..<size where regionMap[r][c] == regionID && !(r == row && c == col) {
@@ -74,46 +54,63 @@ final class PuzzleEngine: ObservableObject {
             }
         }
 
+        // Adjacency rule — no 8-way neighbors
+        for dr in -1...1 {
+            for dc in -1...1 {
+                if dr == 0 && dc == 0 { continue }
+                let nr = row + dr, nc = col + dc
+                if nr >= 0, nr < size, nc >= 0, nc < size,
+                   board[nr][nc] == .queen {
+                    return false
+                }
+            }
+        }
+
         return true
     }
 
-    // MARK: - Puzzle Completion
+    // MARK: - Completion Check
     func checkIfSolved() -> Bool {
-        // All queens must be valid
+        // Must have exactly N queens total
+        let totalQueens = board.flatMap { $0 }.filter { $0 == .queen }.count
+        if totalQueens != size { return false }
+
+        // All queens valid by placement rules
         for r in 0..<size {
             for c in 0..<size where board[r][c] == .queen {
                 if !isValidPlacement(row: r, col: c) { return false }
             }
         }
 
-        // Exactly one queen per row and column
-        for i in 0..<size {
-            if board[i].filter({ $0 == .queen }).count != 1 { return false }
-            if board.map({ $0[i] }).filter({ $0 == .queen }).count != 1 { return false }
+        // One queen per row
+        for r in 0..<size where board[r].filter({ $0 == .queen }).count != 1 {
+            return false
         }
 
-        // Exactly one queen per region
-        var regionCount: [Int: Int] = [:]
+        // One queen per column
+        for c in 0..<size {
+            let colQueens = (0..<size).filter { board[$0][c] == .queen }.count
+            if colQueens != 1 { return false }
+        }
+
+        // One queen per region
+        var regionCounts: [Int: Int] = [:]
         for r in 0..<size {
             for c in 0..<size where board[r][c] == .queen {
-                let id = regionMap[r][c]
-                regionCount[id, default: 0] += 1
+                regionCounts[regionMap[r][c], default: 0] += 1
             }
         }
-        if regionCount.values.contains(where: { $0 != 1 }) { return false }
+        if regionCounts.values.contains(where: { $0 != 1 }) { return false }
 
         return true
     }
 
-    // MARK: - Utility
+    // MARK: - Reset
     func resetBoard() {
-        for r in 0..<size {
-            for c in 0..<size {
-                board[r][c] = .empty
-            }
-        }
+        for r in 0..<size { for c in 0..<size { board[r][c] = .empty } }
     }
 
+    // MARK: - Helpers
     var uniqueRegionIDs: [Int] {
         Set(regionMap.flatMap { $0 }).sorted()
     }
