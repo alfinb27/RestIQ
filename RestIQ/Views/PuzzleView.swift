@@ -3,11 +3,12 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 12/10/25.
+//  Refined for iOS 18+ Liquid Glass aesthetic, preserving classic grid visuals.
 //
-
 
 import SwiftUI
 
+@available(iOS 18.0, *)
 struct PuzzleView: View {
     let level: String
     @State private var timerRunning = false
@@ -15,12 +16,11 @@ struct PuzzleView: View {
     @State private var showCompletion = false
     @State private var gridSize: Int = 6
     @StateObject private var engine: PuzzleEngine
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var regionColorMap: [Int: Color] = [:]
 
-    private var isPad: Bool {
-        UIDevice.current.userInterfaceIdiom == .pad
-    }
+    private var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
     init(level: String) {
         self.level = level
@@ -32,7 +32,6 @@ struct PuzzleView: View {
         case "Expert": size = 9
         default: size = 6
         }
-
         _gridSize = State(initialValue: size)
         let engine = DailyChallengeManager.shared.generatePuzzle(for: level)
         _engine = StateObject(wrappedValue: engine)
@@ -40,11 +39,41 @@ struct PuzzleView: View {
 
     var body: some View {
         ZStack {
-            Color(.systemGray6).ignoresSafeArea()
+            // MARK: - Warm Liquid Glass Background
+            LinearGradient(
+                colors: [
+                    Color(.displayP3, red: 1.00, green: 0.74, blue: 0.40),
+                    Color(.displayP3, red: 1.00, green: 0.56, blue: 0.36),
+                    Color(.displayP3, red: 0.96, green: 0.28, blue: 0.36)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .opacity(0.35)
+            .blur(radius: 60)
+            .ignoresSafeArea()
+            .overlay(
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .ignoresSafeArea()
+            )
 
             VStack(spacing: isPad ? 20 : 12) {
                 headerView
-                gridView
+
+                // MARK: - Frosted Grid Container (Glass Pane)
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        gridView
+                            .padding(8)
+                    )
+                    .shadow(color: .black.opacity(colorScheme == .dark ? 0.4 : 0.1),
+                            radius: 12, x: 0, y: 4)
+                    .padding(.horizontal, isPad ? 80 : 20)
+                    .frame(maxWidth: isPad ? 720 : .infinity)
+                    .aspectRatio(1, contentMode: .fit)
+
                 controlView
                 Spacer(minLength: isPad ? 60 : 20)
             }
@@ -56,8 +85,26 @@ struct PuzzleView: View {
                 Text("You finished in \(formattedTime()).")
             }
         }
-        .navigationTitle(level)
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(level.uppercased())
+                    .font(.system(size: isPad ? 22 : 18, weight: .bold, design: .rounded))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                Color(.displayP3, red: 1.0, green: 0.7, blue: 0.4),
+                                Color(.displayP3, red: 0.96, green: 0.3, blue: 0.36)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.35 : 0.12),
+                            radius: 6, x: 0, y: 3)
+                    .padding(.top, 4)
+            }
+        }
+
     }
 
     // MARK: - Header
@@ -69,17 +116,19 @@ struct PuzzleView: View {
 
             Spacer()
 
-            Text("Difficulty \(level.uppercased())")
+            Text(level.uppercased())
                 .font(.system(size: isPad ? 16 : 12))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(Color.gray.opacity(0.15))
-                .clipShape(Capsule())
+                .background(.thinMaterial)
+                .cornerRadius(10)
 
             Spacer()
 
             Button {
-                engine.resetBoard()
+                withAnimation(.easeInOut) {
+                    engine.resetBoard()
+                }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: isPad ? 24 : 18))
@@ -87,9 +136,12 @@ struct PuzzleView: View {
             }
         }
         .padding(.horizontal, isPad ? 100 : 20)
+        .background(.ultraThinMaterial)
+        .cornerRadius(12)
+        .shadow(radius: 3)
     }
 
-    // MARK: - Grid
+    // MARK: - Grid (unchanged visuals)
     private var gridView: some View {
         VStack(spacing: 0) {
             ForEach(0..<gridSize, id: \.self) { row in
@@ -119,7 +171,8 @@ struct PuzzleView: View {
                         }
                         .overlay(
                             Rectangle()
-                                .stroke(isInvalid ? Color.red : .clear, lineWidth: isInvalid ? 2 : 0)
+                                .stroke(isInvalid ? Color.red : .clear,
+                                        lineWidth: isInvalid ? 2 : 0)
                         )
                         .onTapGesture {
                             engine.tapCell(row: row, col: col)
@@ -131,11 +184,6 @@ struct PuzzleView: View {
                 }
             }
         }
-        .aspectRatio(1, contentMode: .fit)
-        .cornerRadius(12)
-        .shadow(radius: 4)
-        .padding(.horizontal, isPad ? 100 : 20)
-        .frame(maxWidth: isPad ? 700 : .infinity)
     }
 
     // MARK: - Controls
@@ -150,7 +198,11 @@ struct PuzzleView: View {
         }
         .font(.system(size: isPad ? 20 : 16))
         .buttonStyle(.borderedProminent)
+        .tint(Color(.displayP3, red: 0.96, green: 0.28, blue: 0.36))
         .padding(.top, isPad ? 20 : 10)
+        .background(.thinMaterial)
+        .cornerRadius(12)
+        .shadow(radius: 3)
     }
 
     // MARK: - Timer
@@ -158,18 +210,13 @@ struct PuzzleView: View {
         timerRunning = true
         timeElapsed = 0
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
-            if !timerRunning {
-                timer.invalidate()
-            } else {
-                timeElapsed += 1
-            }
+            if !timerRunning { timer.invalidate() }
+            else { timeElapsed += 1 }
         }
     }
 
     private func formattedTime() -> String {
-        let minutes = timeElapsed / 60
-        let seconds = timeElapsed % 60
-        return String(format: "%d:%02d", minutes, seconds)
+        String(format: "%d:%02d", timeElapsed / 60, timeElapsed % 60)
     }
 
     // MARK: - Colors
@@ -193,37 +240,34 @@ struct PuzzleView: View {
     }
 
     private func regionColor(for id: Int) -> Color {
-        regionColorMap[id] ?? Color(hue: Double(id) * 0.15.truncatingRemainder(dividingBy: 1.0),
-                                    saturation: 0.5,
-                                    brightness: 0.95)
-                                    .opacity(0.35)
+        regionColorMap[id] ??
+        Color(hue: Double(id) * 0.15.truncatingRemainder(dividingBy: 1.0),
+              saturation: 0.5, brightness: 0.95)
+        .opacity(0.35)
     }
 
-    // MARK: - Grid Lines
     private func lightGridLines() -> some View {
         Rectangle()
-            .stroke(Color.black.opacity(1.0), lineWidth: 0.5) // subtle separators between all cells
+            .stroke(Color.black.opacity(1.0), lineWidth: 0.5)
     }
 
-    // MARK: - Region Borders
     private func regionBorders(row: Int, col: Int) -> some View {
         let current = engine.regionMap[row][col]
         var top = false, bottom = false, left = false, right = false
 
-        if row > 0 && engine.regionMap[row-1][col] != current { top = true }
-        if row < gridSize-1 && engine.regionMap[row+1][col] != current { bottom = true }
-        if col > 0 && engine.regionMap[row][col-1] != current { left = true }
-        if col < gridSize-1 && engine.regionMap[row][col+1] != current { right = true }
+        if row > 0 && engine.regionMap[row - 1][col] != current { top = true }
+        if row < gridSize - 1 && engine.regionMap[row + 1][col] != current { bottom = true }
+        if col > 0 && engine.regionMap[row][col - 1] != current { left = true }
+        if col < gridSize - 1 && engine.regionMap[row][col + 1] != current { right = true }
 
         return Rectangle()
             .strokeBorder(Color.black.opacity(0.7), lineWidth: isPad ? 3 : 2)
-            .mask(
-                RegionBorderMask(top: top, bottom: bottom, left: left, right: right)
-            )
+            .mask(RegionBorderMask(top: top, bottom: bottom, left: left, right: right))
     }
 }
 
 // MARK: - Region Border Mask
+@available(iOS 18.0, *)
 private struct RegionBorderMask: Shape {
     let top: Bool
     let bottom: Bool
@@ -241,29 +285,6 @@ private struct RegionBorderMask: Shape {
     }
 }
 
-
 #Preview("Easy") {
-    NavigationStack {
-        PuzzleView(level: "Easy")
-    }
-}
-
-#Preview("Medium - Dark") {
-    NavigationStack {
-        PuzzleView(level: "Medium")
-            .preferredColorScheme(.dark)
-    }
-}
-
-#Preview("Hard - Larger Dynamic Type") {
-    NavigationStack {
-        PuzzleView(level: "Hard")
-            .environment(\.sizeCategory, .accessibilityExtraLarge)
-    }
-}
-
-#Preview("Expert") {
-    NavigationStack {
-        PuzzleView(level: "Expert")
-    }
+    NavigationStack { PuzzleView(level: "Easy") }
 }
