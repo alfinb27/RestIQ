@@ -4,15 +4,16 @@
 //
 //  Created by Alfin Baby on 12/10/25.
 //
+// VM for HomeView. Keeps simple navigation state and streaks.
 
+import Foundation
 import SwiftUI
 import Combine
 
 @MainActor
-class HomeViewModel: ObservableObject {
+final class HomeViewModel: ObservableObject {
     @Published var levels: [String] = ["Easy", "Medium", "Hard", "Expert"]
-    @Published var selectedLevel: String = ""
-    @Published var navigateToPuzzle: Bool = false
+    @Published var selectedLevel: String?
     @Published var streak: Int = 0
     @Published var lastPlayed: Date? = nil
 
@@ -24,18 +25,17 @@ class HomeViewModel: ObservableObject {
     }
 
     func selectLevel(_ level: String) {
+        // Placeholder for future gating / purchases
         if level == "Expert" {
-            // Placeholder for future purchase logic
-            print("Expert level is locked.")
-        } else {
-            selectedLevel = level
-            navigateToPuzzle = true
-            updateStreak()
+            // locked path
+            return
         }
+        selectedLevel = level
+        updateStreak()
     }
 
     private func updateStreak() {
-        // Simplified placeholder logic
+        // Simplified streak update for now.
         streak += 1
         lastPlayed = Date()
     }

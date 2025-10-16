@@ -3,217 +3,209 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 12/10/25.
-//  Updated: Liquid Glass unified with PuzzleView style (iOS 18+)
+//  Updated: Added user icon with modal sheet segue to UserDashboard
 //
 
 import SwiftUI
 
 @available(iOS 18.0, *)
 struct HomeView: View {
-    @StateObject private var viewModel = HomeViewModel()
     @Environment(\.colorScheme) private var colorScheme
-    @StateObject private var motion = ParallaxMotion.shared
-
-    private var warmGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color(.displayP3, red: 1.00, green: 0.74, blue: 0.40).opacity(colorScheme == .dark ? 0.18 : 0.35),
-                Color(.displayP3, red: 1.00, green: 0.56, blue: 0.36).opacity(colorScheme == .dark ? 0.18 : 0.42),
-                Color(.displayP3, red: 0.96, green: 0.28, blue: 0.36).opacity(colorScheme == .dark ? 0.16 : 0.44)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
+    @StateObject private var vm = HomeViewModel()
+    @State private var showUserDashboard = false
 
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
-                warmGradient
-                    .ignoresSafeArea()
-                    .blur(radius: 40)
-                    .overlay(Rectangle().fill(.ultraThinMaterial).ignoresSafeArea())
+                adaptiveBackground
+                    .allowsHitTesting(false)
 
                 VStack(spacing: 8) {
+                    headerBar
+                        .padding(.horizontal, 20)
+                        .padding(.top, 12)
+
                     ScrollView(showsIndicators: false) {
                         VStack(spacing: 8) {
                             titleSection
-                                .padding(.top, 10)
+                                .padding(.top, 4)
                                 .padding(.bottom, 4)
                             levelStack
                         }
                         .padding(.horizontal, 20)
                     }
 
-                    footerSection           // pinned
+                    footerSection
                         .padding(.horizontal, 20)
                         .padding(.bottom, 10)
                 }
             }
+            .sheet(isPresented: $showUserDashboard) {
+                UserDashboardView()
+                    .presentationDetents([PresentationDetent.large])
+                    .presentationCornerRadius(24)
+            }
             .navigationTitle("")
             .navigationBarHidden(true)
-            .task { motion.start() }
-            .onDisappear { motion.stop() }
         }
     }
 
-    // MARK: - Title Section
-    private var titleSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack {
-                // Gentle blurred light glow behind text
+    // MARK: - Top Right Profile Button
+    private var headerBar: some View {
+        HStack {
+            Spacer()
+            Button {
+                Haptics.soft()
+                showUserDashboard = true
+            } label: {
+                Image(systemName: "person")
+                    .font(.system(size: 30))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(
+                        colorScheme == .light
+                        ? Color(.displayP3, red: 0.96, green: 0.3, blue: 0.36)
+                        : Color(.displayP3, red: 0.9, green: 0.6, blue: 0.9)
+                    )
+                    .background(
+                        Circle()
+                            .fill(.ultraThinMaterial)
+                            .frame(width: 42, height: 42)
+                            .shadow(color: .black.opacity(0.15), radius: 4, x: 1, y: 2)
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Adaptive Background
+    private var adaptiveBackground: some View {
+        ZStack {
+            if colorScheme == .light {
+                // Darker, richer light theme with orange tint
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(colorScheme == .dark ? 0.05 : 0.15),
-                        Color.white.opacity(0.0)
+                        Color(.displayP3, red: 0.98, green: 0.65, blue: 0.30).opacity(0.55), // deeper amber
+                        Color(.displayP3, red: 0.98, green: 0.50, blue: 0.25).opacity(0.60), // orange
+                        Color(.displayP3, red: 0.90, green: 0.35, blue: 0.30).opacity(0.55)  // coral red
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
-                .blur(radius: 12)
-                .offset(y: 2)
-
-                // App Title
-                Text("RestIQ")
-                    .font(.system(size: 46, weight: .bold, design: .rounded))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                Color(.displayP3, red: 1.0, green: 0.7, blue: 0.4),
-                                Color(.displayP3, red: 0.96, green: 0.3, blue: 0.36)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.35 : 0.12),
-                            radius: 8, x: 0, y: 4)
+            } else {
+                // Cooler dark background
+                LinearGradient(
+                    colors: [
+                        Color(.displayP3, red: 0.22, green: 0.20, blue: 0.28),
+                        Color(.displayP3, red: 0.18, green: 0.16, blue: 0.22),
+                        Color(.displayP3, red: 0.12, green: 0.10, blue: 0.16)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 2)
 
-            Text("Daily puzzles to refresh your mind")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .padding(.leading, 2)
+            // Translucent glass overlay
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(colorScheme == .light ? 0.85 : 0.8)
+                .blendMode(.overlay)
         }
-        .padding(.horizontal, 4)
+        .blur(radius: 45)
+        .ignoresSafeArea()
     }
 
-    // MARK: - Levels List
+    // MARK: - Title Section
+    private var titleSection: some View {
+        VStack(alignment: .center, spacing: 6) {
+            Text("RestIQ")
+                .font(.system(size: 50, weight: .bold, design: .rounded))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: colorScheme == .light
+                        ? [
+                            Color(.displayP3, red: 1.0, green: 0.7, blue: 0.4),
+                            Color(.displayP3, red: 0.96, green: 0.3, blue: 0.36)
+                        ]
+                        : [
+                            Color(.displayP3, red: 0.95, green: 0.6, blue: 0.5),
+                            Color(.displayP3, red: 0.9, green: 0.4, blue: 0.6)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .shadow(color: .white.opacity(colorScheme == .light ? 0.25 : 0.1), radius: 8, x: 0, y: 2)
+                .shadow(color: .black.opacity(colorScheme == .light ? 0.15 : 0.5), radius: 4, x: 0, y: 3)
+
+            Text("Daily puzzles to refresh your mind")
+                .font(.subheadline.weight(.medium))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+    }
+
+    // MARK: - Level Stack
     private var levelStack: some View {
         VStack(spacing: 16) {
-            ForEach(viewModel.levels, id: \.self) { level in
-                NavigationLink(value: level) {
-                    LevelCardLiquid(level: level, isLocked: level == "Expert")
-                        .rotation3DEffect(.degrees(motion.x * 2), axis: (x: 0, y: 1, z: 0))
-                }
-                .buttonStyle(.plain)
-                .simultaneousGesture(TapGesture().onEnded {
-                    if level != "Expert" {
-                        viewModel.selectLevel(level)
+            ForEach(vm.levels, id: \.self) { level in
+                Group {
+                    if level == "Expert" {
+                        LevelCardLiquid(level: level, isLocked: true)
+                            .onTapGesture { Haptics.soft() }
                     } else {
-                        Haptics.soft()
+                        NavigationLink(destination: PuzzleView(level: level)) {
+                            LevelCardLiquid(level: level, isLocked: false)
+                        }
+                        .buttonStyle(.plain)
                     }
-                })
+                }
             }
-        }
-        .navigationDestination(for: String.self) { level in
-            PuzzleView(level: level)
         }
         .padding(.vertical, 10)
     }
 
-    // MARK: - Footer (Glass Pane)
+    // MARK: - Footer Section
     private var footerSection: some View {
         VStack(spacing: 6) {
-            Text("Streak: \(viewModel.streak) days")
-                .font(.footnote)
-                .foregroundColor(.secondary)
-            Text("Last Played: \(viewModel.lastPlayedDisplay)")
+            Text("Streak: \(vm.streak) days")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: colorScheme == .light
+                        ? [
+                            Color(.displayP3, red: 1.0, green: 0.7, blue: 0.4),
+                            Color(.displayP3, red: 0.96, green: 0.3, blue: 0.36)
+                        ]
+                        : [
+                            Color(.displayP3, red: 0.9, green: 0.6, blue: 0.5),
+                            Color(.displayP3, red: 0.7, green: 0.4, blue: 0.8)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            Text("Last Played: \(vm.lastPlayedDisplay)")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(.thinMaterial)
+            RoundedRectangle(cornerRadius: 18)
+                .fill(.ultraThinMaterial)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14)
+                    RoundedRectangle(cornerRadius: 18)
                         .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
                 )
         )
-        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.25 : 0.08), radius: 8, x: 0, y: 6)
+        .shadow(color: .black.opacity(0.25), radius: 8, x: 2, y: 3)
     }
 }
 
-// MARK: - Level Card
-@available(iOS 18.0, *)
-private struct LevelCardLiquid: View {
-    let level: String
-    let isLocked: Bool
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var subtitle: String {
-        isLocked ? "Unlock to play Expert mode" : "Play now"
-    }
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 18)
-                .fill(.ultraThinMaterial)
-                .background(
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(.regularMaterial)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18)
-                        .stroke(Color.white.opacity(0.06), lineWidth: 0.6)
-                )
-                .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.25 : 0.1), radius: 8, x: 0, y: 4)
-
-            HStack {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(level)
-                        .font(.title3.weight(.semibold))
-                        .foregroundColor(.primary)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                if isLocked {
-                    Image(systemName: "lock.fill")
-                        .foregroundColor(.secondary)
-                        .padding(.trailing, 16)
-                } else {
-                    Image(systemName: "arrow.right.circle.fill")
-                        .foregroundStyle(
-                            Color(.displayP3, red: 1.00, green: 0.64, blue: 0.40),
-                            Color(.displayP3, red: 0.96, green: 0.28, blue: 0.36)
-                        )
-                        .font(.title2)
-                        .padding(.trailing, 8)
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 18)
-        }
-        .frame(height: 84)
-    }
-}
-
-// MARK: - Haptics
-private enum Haptics {
-    static func soft() {
-        let generator = UIImpactFeedbackGenerator(style: .soft)
-        generator.impactOccurred()
-    }
-}
-
-// MARK: - Preview
-@available(iOS 18.0, *)
 struct HomeView_Previews: PreviewProvider {
     static var previews: some View {
         Group {
@@ -222,3 +214,4 @@ struct HomeView_Previews: PreviewProvider {
         }
     }
 }
+

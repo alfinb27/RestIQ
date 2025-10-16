@@ -4,30 +4,39 @@
 //
 //  Created by Alfin Baby on 12/10/25.
 //
+// Core puzzle model. Keeps board state and implements rules.
+// PuzzleEngine is an observable model so ViewModels can observe changes.
 
 import Foundation
 import Combine
 
+/// Cell states for UI and logic.
 enum CellState: Int, Codable {
     case empty
     case markedX
     case queen
 }
 
+/// PuzzleEngine contains only game state and rule checks.
+/// Marked @MainActor to keep UI-friendly access and to be safely mutated on main thread.
+@MainActor
 final class PuzzleEngine: ObservableObject {
-    @Published var board: [[CellState]]
+    @Published private(set) var board: [[CellState]]
     let size: Int
     let regionMap: [[Int]]
 
+    /// Initialize with square region map. Precondition enforces rule #1.
     init(size: Int, regionMap: [[Int]]) {
         precondition(regionMap.count == size && regionMap.allSatisfy({ $0.count == size }),
-                     "Region map must match grid size.")
+                     "Region map must be square and match grid size")
         self.size = size
         self.regionMap = regionMap
         self.board = Array(repeating: Array(repeating: .empty, count: size), count: size)
     }
 
-    // MARK: - Tap Cycle
+    // MARK: - Mutations
+
+    /// Tap cycles: empty -> X -> queen -> empty
     func tapCell(row: Int, col: Int) {
         switch board[row][col] {
         case .empty: board[row][col] = .markedX
@@ -36,14 +45,29 @@ final class PuzzleEngine: ObservableObject {
         }
     }
 
-    // MARK: - Validation Logic
+    func resetBoard() {
+        for r in 0..<size {
+            for c in 0..<size {
+                board[r][c] = .empty
+            }
+        }
+    }
+
+    // MARK: - Validation logic (rules 4,5,6,7)
+
+    /// True if the queen at (row,col) obeys all placement constraints.
+    /// Returns true for non-queen cells to simplify UI checks.
     func isValidPlacement(row: Int, col: Int) -> Bool {
         guard board[row][col] == .queen else { return true }
 
-        // Row and Column uniqueness
-        for i in 0..<size {
-            if i != row && board[i][col] == .queen { return false }
-            if i != col && board[row][i] == .queen { return false }
+        // Row uniqueness
+        for c in 0..<size where c != col {
+            if board[row][c] == .queen { return false }
+        }
+
+        // Column uniqueness
+        for r in 0..<size where r != row {
+            if board[r][col] == .queen { return false }
         }
 
         // Region uniqueness
@@ -54,43 +78,41 @@ final class PuzzleEngine: ObservableObject {
             }
         }
 
-        // Adjacency rule — no 8-way neighbors
+        // Adjacency (no touching in 8 directions)
         for dr in -1...1 {
             for dc in -1...1 {
                 if dr == 0 && dc == 0 { continue }
-                let nr = row + dr, nc = col + dc
-                if nr >= 0, nr < size, nc >= 0, nc < size,
-                   board[nr][nc] == .queen {
-                    return false
+                let nr = row + dr
+                let nc = col + dc
+                if nr >= 0, nr < size, nc >= 0, nc < size {
+                    if board[nr][nc] == .queen { return false }
                 }
             }
         }
-
         return true
     }
 
-    // MARK: - Completion Check
+    /// Full solved check enforcing exact counts.
     func checkIfSolved() -> Bool {
-        // Must have exactly N queens total
+        // Must be exactly size queens placed.
         let totalQueens = board.flatMap { $0 }.filter { $0 == .queen }.count
         if totalQueens != size { return false }
 
-        // All queens valid by placement rules
+        // Every queen must be locally valid.
         for r in 0..<size {
             for c in 0..<size where board[r][c] == .queen {
                 if !isValidPlacement(row: r, col: c) { return false }
             }
         }
 
-        // One queen per row
-        for r in 0..<size where board[r].filter({ $0 == .queen }).count != 1 {
-            return false
+        // One queen per row and per column (redundant with above but explicit)
+        for r in 0..<size {
+            if board[r].filter({ $0 == .queen }).count != 1 { return false }
         }
-
-        // One queen per column
         for c in 0..<size {
-            let colQueens = (0..<size).filter { board[$0][c] == .queen }.count
-            if colQueens != 1 { return false }
+            var count = 0
+            for r in 0..<size where board[r][c] == .queen { count += 1 }
+            if count != 1 { return false }
         }
 
         // One queen per region
@@ -105,12 +127,7 @@ final class PuzzleEngine: ObservableObject {
         return true
     }
 
-    // MARK: - Reset
-    func resetBoard() {
-        for r in 0..<size { for c in 0..<size { board[r][c] = .empty } }
-    }
-
-    // MARK: - Helpers
+    // Helpers
     var uniqueRegionIDs: [Int] {
         Set(regionMap.flatMap { $0 }).sorted()
     }
