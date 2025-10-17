@@ -11,34 +11,31 @@ import Foundation
 final class DailyChallengeManager {
     static let shared = DailyChallengeManager()
     private let calendar = Calendar.current
+    private var cachedEngines: [String: QueensPuzzleEngine] = [:] // level → engine
 
-    /// Deterministic seed derived from the current day
     func dailySeed() -> UInt64 {
         let date = calendar.startOfDay(for: Date())
         return UInt64(abs(date.hashValue))
     }
 
-    /// Async generator for the day's Queens puzzle
     func generateDailyPuzzle(for level: String) async -> QueensPuzzleEngine? {
+        if let existing = cachedEngines[level] { return existing }
+
         let size: Int
         let difficulty: Difficulty
         switch level {
         case "Easy": size = 6; difficulty = .easy
-        case "Medium": size = 7; difficulty = .medium
-        case "Hard": size = 8; difficulty = .hard
-        case "Expert": size = 9; difficulty = .expert
+        case "Medium": size = 8; difficulty = .medium
+        case "Hard": size = 9; difficulty = .hard
+        case "Expert": size = 10; difficulty = .expert
         default: size = 6; difficulty = .easy
         }
 
-        let seed = dailySeed() &+ UInt64(size * 7919) // stable prime offset
-        let engine = await QueensPuzzleEngine.generate(size: size, difficulty: difficulty, seed: seed)
-        return engine
-    }
-
-    /// Optional helper to preload puzzle generation in the background
-    func preloadDailyPuzzle(level: String) {
-        Task.detached {
-            _ = await self.generateDailyPuzzle(for: level)
+        let seed = dailySeed() &+ UInt64(size * 7919)
+        guard let engine = await QueensPuzzleEngine.generate(size: size, difficulty: difficulty, seed: seed) else {
+            return nil
         }
+        cachedEngines[level] = engine
+        return engine
     }
 }

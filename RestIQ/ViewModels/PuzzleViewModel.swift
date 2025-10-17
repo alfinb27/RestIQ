@@ -18,13 +18,16 @@ final class PuzzleViewModel: ObservableObject {
     @Published var showCompletion = false
     @Published var isLoading = true
     @Published var elapsedSeconds = 0
+    @Published var conflictMessage: String? = nil
 
     private var timerTask: Task<Void, Never>?
     private var engine: QueensPuzzleEngine?
     private let gridSize: Int
     private let difficulty: Difficulty
+    private let level: String
 
     init(level: String) {
+        self.level = level
         switch level {
         case "Easy": gridSize = 6; difficulty = .easy
         case "Medium": gridSize = 7; difficulty = .medium
@@ -32,22 +35,18 @@ final class PuzzleViewModel: ObservableObject {
         case "Expert": gridSize = 9; difficulty = .expert
         default: gridSize = 6; difficulty = .easy
         }
-        Task { await generatePuzzle() }
+        Task { await generateDailyPuzzle() }
     }
 
-    // MARK: - Puzzle generation
-    func generatePuzzle() async {
+    // MARK: - Daily Puzzle Generation
+    func generateDailyPuzzle() async {
         isLoading = true
         stopTimer()
-        var attempt = 0
-        while engine == nil && attempt < 6 {
-            attempt += 1
-            if let e = await QueensPuzzleEngine.generate(size: gridSize, difficulty: difficulty) {
-                engine = e
-            }
+        if let cached = await DailyChallengeManager.shared.generateDailyPuzzle(for: level) {
+            engine = cached
         }
         guard let engine else {
-            print("Puzzle generation failed after \(attempt) attempts.")
+            print("Puzzle generation failed for \(level)")
             isLoading = false
             return
         }
@@ -60,6 +59,7 @@ final class PuzzleViewModel: ObservableObject {
         startTimer()
     }
 
+    // MARK: - Cell Interaction
     func tapCell(row: Int, col: Int) {
         guard let engine else { return }
         Task {
@@ -67,6 +67,20 @@ final class PuzzleViewModel: ObservableObject {
             for change in changes {
                 board[change.row][change.col] = change.newState
             }
+
+            // Conflict detection for toast
+            if board[row][col] == .queen {
+                let conflicts = await engine.conflictTypesForQueen(at: row, col: col)
+                if !conflicts.isEmpty {
+                    await MainActor.run {
+                        Haptics.warning()
+                    }
+                }
+            }
+
+            // 🔴 Recompute red highlight invalids
+            await computeInvalidPositions()
+
             if await engine.checkIfSolved() {
                 stopTimer()
                 showCompletion = true
@@ -74,6 +88,35 @@ final class PuzzleViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Invalid Position Tracking
+    @Published private(set) var invalidPositions: Set<BoardPos> = []
+
+    struct BoardPos: Hashable {
+        let r: Int
+        let c: Int
+    }
+
+    private func computeInvalidPositions() async {
+        guard let engine else { return }
+
+        var invalid = Set<BoardPos>()
+        let size = board.count
+
+        for r in 0..<size {
+            for c in 0..<size where board[r][c] == .queen {
+                if !(await engine.isValidPlacement(row: r, col: c)) {
+                    invalid.insert(BoardPos(r: r, c: c))
+                }
+            }
+        }
+
+        await MainActor.run { self.invalidPositions = invalid }
+    }
+
+    func isPositionInvalid(_ r: Int, _ c: Int) -> Bool {
+        invalidPositions.contains(BoardPos(r: r, c: c))
+    }
+    
     func resetBoard() {
         guard let engine else { return }
         Task {
@@ -82,6 +125,14 @@ final class PuzzleViewModel: ObservableObject {
                 board[ch.row][ch.col] = ch.newState
             }
             elapsedSeconds = 0
+        }
+    }
+
+    // MARK: - Conflict Toast
+    private func showConflictToast(with conflicts: [String]) {
+        conflictMessage = "Conflict: " + conflicts.joined(separator: ", ")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            self.conflictMessage = nil
         }
     }
 
@@ -105,6 +156,7 @@ final class PuzzleViewModel: ObservableObject {
         String(format: "%d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)
     }
 
+    // MARK: - Region Colors
     private func buildRegionColors() {
         let ids = Set(regionMap.flatMap { $0 })
         var colors: [Int: Color] = [:]
@@ -116,7 +168,4 @@ final class PuzzleViewModel: ObservableObject {
     }
 
     var size: Int { gridSize }
-
-    func isPositionInvalid(_ r: Int, _ c: Int) -> Bool { false }
-    func borderFlagsFor(_ r: Int, _ c: Int) -> Void {}
 }
