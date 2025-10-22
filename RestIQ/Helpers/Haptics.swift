@@ -3,58 +3,63 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 16/10/25.
+//  Updated: Safe, reusable haptic generators.
 //
-// Lightweight haptics helper for SwiftUI actions.
 
 import UIKit
 
 enum Haptics {
-    /// A gentle tap suitable for subtle interactions, like tapping a locked card.
+    private static let impactSoft = UIImpactFeedbackGenerator(style: .soft)
+    private static let impactLight = UIImpactFeedbackGenerator(style: .light)
+    private static let impactMedium = UIImpactFeedbackGenerator(style: .medium)
+    private static let impactHeavy = UIImpactFeedbackGenerator(style: .heavy)
+    private static let notifier = UINotificationFeedbackGenerator()
+
+    private static var hapticsAvailable: Bool {
+        // On iOS devices without Taptic Engine, the generators no-op anyway,
+        // but we can early-out in simulators / older devices if needed later.
+        true
+    }
+
     static func soft() {
-        let generator = UIImpactFeedbackGenerator(style: .soft)
-        generator.prepare()
-        generator.impactOccurred()
+        guard hapticsAvailable else { return }
+        impactSoft.prepare()
+        impactSoft.impactOccurred()
     }
 
-    /// Slightly stronger than soft.
     static func light() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.prepare()
-        generator.impactOccurred()
+        guard hapticsAvailable else { return }
+        impactLight.prepare()
+        impactLight.impactOccurred()
     }
 
-    /// Medium feedback.
     static func medium() {
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.prepare()
-        generator.impactOccurred()
+        guard hapticsAvailable else { return }
+        impactMedium.prepare()
+        impactMedium.impactOccurred()
     }
 
-    /// Heavy feedback.
     static func heavy() {
-        let generator = UIImpactFeedbackGenerator(style: .heavy)
-        generator.prepare()
-        generator.impactOccurred()
+        guard hapticsAvailable else { return }
+        impactHeavy.prepare()
+        impactHeavy.impactOccurred()
     }
 
-    /// Success notification haptic.
     static func success() {
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        generator.notificationOccurred(.success)
+        guard hapticsAvailable else { return }
+        notifier.prepare()
+        notifier.notificationOccurred(.success)
     }
 
-    /// Warning notification haptic.
     static func warning() {
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        generator.notificationOccurred(.warning)
+        guard hapticsAvailable else { return }
+        notifier.prepare()
+        notifier.notificationOccurred(.warning)
     }
 
-    /// Error notification haptic.
     static func error() {
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        generator.notificationOccurred(.error)
+        guard hapticsAvailable else { return }
+        notifier.prepare()
+        notifier.notificationOccurred(.error)
     }
 }

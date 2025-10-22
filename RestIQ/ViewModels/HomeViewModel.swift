@@ -3,8 +3,8 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 12/10/25.
+//  VM for HomeView. Keeps simple navigation state and streaks.
 //
-// VM for HomeView. Keeps simple navigation state and streaks.
 
 import Foundation
 import SwiftUI
@@ -25,11 +25,6 @@ final class HomeViewModel: ObservableObject {
     }
 
     func selectLevel(_ level: String) {
-        // Placeholder for future gating / purchases
-        if level == "Expert" {
-            // locked path
-            return
-        }
         selectedLevel = level
         updateStreak()
     }

@@ -5,14 +5,6 @@
 //  Created by Alfin Baby on 16/10/25.
 //
 
-
-//
-//  LaunchScreenView.swift
-//  RestIQ
-//
-//  Created by Alfin Baby on 17/10/25.
-//
-
 import SwiftUI
 
 struct LaunchScreenView: View {
@@ -49,9 +41,7 @@ struct LaunchScreenView: View {
                     .animation(.easeOut(duration: 1.2).delay(0.4), value: fadeIn)
             }
         }
-        .onAppear {
-            fadeIn = true
-        }
+        .onAppear { fadeIn = true }
     }
 }
 

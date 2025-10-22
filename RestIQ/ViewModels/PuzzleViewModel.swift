@@ -3,7 +3,7 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 16/10/25.
-//  Updated: Performance — precompute invalid positions and region borders.
+//  Updated: conflict toast wired; clears invalids on reset; deterministic region colors.
 //
 
 import Foundation
@@ -73,16 +73,19 @@ final class PuzzleViewModel: ObservableObject {
                 let conflicts = await engine.conflictTypesForQueen(at: row, col: col)
                 if !conflicts.isEmpty {
                     await MainActor.run {
+                        conflictMessage = "Conflict: " + conflicts.joined(separator: ", ")
                         Haptics.warning()
+                        dismissToastAfterDelay()
                     }
                 }
             }
 
-            // 🔴 Recompute red highlight invalids
+            // Recompute invalid highlights
             await computeInvalidPositions()
 
             if await engine.checkIfSolved() {
                 stopTimer()
+                Haptics.success()
                 showCompletion = true
             }
         }
@@ -116,7 +119,7 @@ final class PuzzleViewModel: ObservableObject {
     func isPositionInvalid(_ r: Int, _ c: Int) -> Bool {
         invalidPositions.contains(BoardPos(r: r, c: c))
     }
-    
+
     func resetBoard() {
         guard let engine else { return }
         Task {
@@ -125,12 +128,16 @@ final class PuzzleViewModel: ObservableObject {
                 board[ch.row][ch.col] = ch.newState
             }
             elapsedSeconds = 0
+            await MainActor.run {
+                invalidPositions = []
+                conflictMessage = nil
+            }
+            startTimer()
         }
     }
 
-    // MARK: - Conflict Toast
-    private func showConflictToast(with conflicts: [String]) {
-        conflictMessage = "Conflict: " + conflicts.joined(separator: ", ")
+    // MARK: - Toast Helpers
+    private func dismissToastAfterDelay() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.conflictMessage = nil
         }
@@ -156,13 +163,14 @@ final class PuzzleViewModel: ObservableObject {
         String(format: "%d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)
     }
 
-    // MARK: - Region Colors
+    // MARK: - Region Colors (deterministic pastel palette)
     private func buildRegionColors() {
         let ids = Set(regionMap.flatMap { $0 })
         var colors: [Int: Color] = [:]
         for id in ids.sorted() {
-            let hue = Double(id % 10) / 10.0
-            colors[id] = Color(hue: hue, saturation: 0.5, brightness: 0.9).opacity(0.35)
+            // Deterministic hue sequence; saturation/brightness tuned
+            let hue = Double((id * 37) % 360) / 360.0
+            colors[id] = Color(hue: hue, saturation: 0.45, brightness: 0.92).opacity(0.35)
         }
         regionColors = colors
     }

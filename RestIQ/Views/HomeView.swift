@@ -3,7 +3,7 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 12/10/25.
-//  Updated: Added user icon with modal sheet segue to UserDashboard
+//  Updated: minor tidy; profile button haptic.
 //
 
 import SwiftUI
@@ -42,7 +42,7 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showUserDashboard) {
                 UserDashboardView()
-                    .presentationDetents([PresentationDetent.large])
+                    .presentationDetents([.large])
                     .presentationCornerRadius(24)
             }
             .navigationTitle("")
@@ -81,18 +81,16 @@ struct HomeView: View {
     private var adaptiveBackground: some View {
         ZStack {
             if colorScheme == .light {
-                // Darker, richer light theme with orange tint
                 LinearGradient(
                     colors: [
-                        Color(.displayP3, red: 0.98, green: 0.65, blue: 0.30).opacity(0.55), // deeper amber
-                        Color(.displayP3, red: 0.98, green: 0.50, blue: 0.25).opacity(0.60), // orange
-                        Color(.displayP3, red: 0.90, green: 0.35, blue: 0.30).opacity(0.55)  // coral red
+                        Color(.displayP3, red: 0.98, green: 0.65, blue: 0.30).opacity(0.55),
+                        Color(.displayP3, red: 0.98, green: 0.50, blue: 0.25).opacity(0.60),
+                        Color(.displayP3, red: 0.90, green: 0.35, blue: 0.30).opacity(0.55)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
             } else {
-                // Cooler dark background
                 LinearGradient(
                     colors: [
                         Color(.displayP3, red: 0.22, green: 0.20, blue: 0.28),
@@ -104,7 +102,6 @@ struct HomeView: View {
                 )
             }
 
-            // Translucent glass overlay
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .opacity(colorScheme == .light ? 0.85 : 0.8)
@@ -152,17 +149,10 @@ struct HomeView: View {
     private var levelStack: some View {
         VStack(spacing: 16) {
             ForEach(vm.levels, id: \.self) { level in
-                Group {
-                    if level == "Expert" {
-                        LevelCardLiquid(level: level, isLocked: true)
-                            .onTapGesture { Haptics.soft() }
-                    } else {
-                        NavigationLink(destination: PuzzleView(level: level)) {
-                            LevelCardLiquid(level: level, isLocked: false)
-                        }
-                        .buttonStyle(.plain)
-                    }
+                NavigationLink(destination: PuzzleView(level: level)) {
+                    LevelCardLiquid(level: level, isLocked: false)
                 }
+                .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 10)

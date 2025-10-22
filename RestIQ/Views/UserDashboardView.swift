@@ -41,18 +41,16 @@ struct UserDashboardView: View {
     private var adaptiveBackground: some View {
         ZStack {
             if colorScheme == .light {
-                // Darker, richer light theme with orange tint
                 LinearGradient(
                     colors: [
-                        Color(.displayP3, red: 0.98, green: 0.65, blue: 0.30).opacity(0.55), // deeper amber
-                        Color(.displayP3, red: 0.98, green: 0.50, blue: 0.25).opacity(0.60), // orange
-                        Color(.displayP3, red: 0.90, green: 0.35, blue: 0.30).opacity(0.55)  // coral red
+                        Color(.displayP3, red: 0.98, green: 0.65, blue: 0.30).opacity(0.55),
+                        Color(.displayP3, red: 0.98, green: 0.50, blue: 0.25).opacity(0.60),
+                        Color(.displayP3, red: 0.90, green: 0.35, blue: 0.30).opacity(0.55)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
             } else {
-                // Cooler dark background
                 LinearGradient(
                     colors: [
                         Color(.displayP3, red: 0.22, green: 0.20, blue: 0.28),
@@ -64,7 +62,6 @@ struct UserDashboardView: View {
                 )
             }
 
-            // Translucent glass overlay
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .opacity(colorScheme == .light ? 0.85 : 0.8)

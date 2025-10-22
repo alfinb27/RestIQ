@@ -15,7 +15,7 @@ public enum CellState: Int, Codable, Sendable {
     case queen
 }
 
-public enum Difficulty {
+public enum Difficulty: String, Codable, CaseIterable, Sendable {
     case easy
     case medium
     case hard
@@ -27,7 +27,7 @@ public struct CellChange: Sendable {
     public let row: Int
     public let col: Int
     public let newState: CellState
-    public init(row: Int, col: Int, newState: CellState) {
+    public nonisolated init(row: Int, col: Int, newState: CellState) {
         self.row = row; self.col = col; self.newState = newState
     }
 }
@@ -47,55 +47,71 @@ public actor QueensPuzzleEngine {
     public let size: Int
     public let regionMap: [[Int]]
     public private(set) var board: [[CellState]]
-    let canonicalSolution: [(Int, Int)]
-    private var rng: RandomNumberGenerator
+    private let canonicalSolution: [(Int, Int)]
 
     // MARK: - Initialization
-    init(size: Int,
-         regionMap: [[Int]],
-         canonicalSolution: [(Int, Int)],
-         seed: UInt64? = nil) {
+    public init(size: Int,
+                regionMap: [[Int]],
+                canonicalSolution: [(Int, Int)],
+                seed: UInt64? = nil) {
         self.size = size
         self.regionMap = regionMap
         self.canonicalSolution = canonicalSolution
         self.board = Array(repeating: Array(repeating: .empty, count: size), count: size)
-        if let s = seed {
-            self.rng = SplitMix64(seed: s)
-        } else {
-            self.rng = SystemRNG()
-        }
     }
 
     // MARK: - Generator
-    public static func generate(size: Int,
-                                difficulty: Difficulty,
-                                attempts: Int = 120,
-                                seed: UInt64? = nil) async -> QueensPuzzleEngine? {
+    /// Generates an engine whose puzzle has a unique solution for the given size/difficulty.
+    /// Marked `nonisolated` so it can be called without actor hopping (Swift 6 safe).
+    public nonisolated static func generate(size: Int,
+                                            difficulty: Difficulty,
+                                            attempts: Int = 120,
+                                            seed: UInt64? = nil) async -> QueensPuzzleEngine? {
         guard size >= 4 && size <= 20 else { return nil }
 
-        var rng: RandomNumberGenerator = seed.map { SplitMix64(seed: $0) } ?? SystemRNG()
-
-        for _ in 0..<attempts {
-            let regionMap = RegionGenerator.generateRegionMap(size: size,
-                                                              regions: size,
-                                                              difficulty: difficulty,
-                                                              rng: &rng)
-            let solver = Solver(size: size, regionMap: regionMap)
-            let solutions = solver.findUpTo(maxCount: 2)
-            if solutions.count == 1 {
-                let canonical = solutions[0]
-                return QueensPuzzleEngine(size: size,
-                                          regionMap: regionMap,
-                                          canonicalSolution: canonical,
-                                          seed: seed)
+        if let seed {
+            // No await needed; initializer is synchronous and nonisolated.
+            var rng = await SeededRandomNumberGenerator(seed: seed)
+            for _ in 0..<attempts {
+                let regionMap = await RegionGenerator.generateRegionMap(size: size,
+                                                                        regions: size,
+                                                                        difficulty: difficulty,
+                                                                        rng: &rng)
+                let solver = Solver(size: size, regionMap: regionMap)
+                let solutions = await solver.findUpTo(maxCount: 2)
+                if solutions.count == 1 {
+                    let canonical = solutions[0]
+                    return QueensPuzzleEngine(size: size,
+                                              regionMap: regionMap,
+                                              canonicalSolution: canonical,
+                                              seed: seed)
+                }
+            }
+        } else {
+            var rng = SystemRandomNumberGenerator()
+            for _ in 0..<attempts {
+                let regionMap = await RegionGenerator.generateRegionMap(size: size,
+                                                                        regions: size,
+                                                                        difficulty: difficulty,
+                                                                        rng: &rng)
+                let solver = Solver(size: size, regionMap: regionMap)
+                let solutions = await solver.findUpTo(maxCount: 2)
+                if solutions.count == 1 {
+                    let canonical = solutions[0]
+                    return QueensPuzzleEngine(size: size,
+                                              regionMap: regionMap,
+                                              canonicalSolution: canonical,
+                                              seed: nil)
+                }
             }
         }
         return nil
     }
 
     // MARK: - Snapshot
-    public func snapshot() -> EngineSnapshot {
-        EngineSnapshot(board: board, regionMap: regionMap)
+    public func snapshot() async -> EngineSnapshot {
+        // Access actor-isolated state directly; no MainActor hop here.
+        await EngineSnapshot(board: board, regionMap: regionMap)
     }
 
     // MARK: - Actions
@@ -159,8 +175,8 @@ public actor QueensPuzzleEngine {
                 if dr == 0 && dc == 0 { continue }
                 let nr = row + dr
                 let nc = col + dc
-                if nr >= 0, nr < size, nc >= 0, nc < size {
-                    if board[nr][nc] == .queen { return false }
+                if nr >= 0, nr < size, nc >= 0, nc < size, board[nr][nc] == .queen {
+                    return false
                 }
             }
         }
@@ -186,12 +202,9 @@ public actor QueensPuzzleEngine {
 
         // Region
         let rid = regionMap[row][col]
-        for r in 0..<size {
+        outer: for r in 0..<size {
             for c in 0..<size where regionMap[r][c] == rid && !(r == row && c == col) {
-                if board[r][c] == .queen {
-                    conflicts.append("Region")
-                    break
-                }
+                if board[r][c] == .queen { conflicts.append("Region"); break outer }
             }
         }
 
@@ -201,11 +214,9 @@ public actor QueensPuzzleEngine {
                 if dr == 0 && dc == 0 { continue }
                 let nr = row + dr
                 let nc = col + dc
-                if nr >= 0, nr < size, nc >= 0, nc < size {
-                    if board[nr][nc] == .queen {
-                        conflicts.append("Adjacent")
-                        break
-                    }
+                if nr >= 0, nr < size, nc >= 0, nc < size, board[nr][nc] == .queen {
+                    conflicts.append("Adjacent")
+                    break
                 }
             }
         }
@@ -268,7 +279,7 @@ fileprivate struct Solver {
         var regionUsed = [Int: Bool]()
         var placed: [(Int, Int)] = []
 
-        func isAdjacentConflict(r1: Int, c1: Int, r2: Int, c2: Int) -> Bool {
+        func isAdjacentConflict(_ r1: Int, _ c1: Int, _ r2: Int, _ c2: Int) -> Bool {
             abs(r1 - r2) <= 1 && abs(c1 - c2) <= 1
         }
 
@@ -279,13 +290,13 @@ fileprivate struct Solver {
                 return
             }
 
-            for c in 0..<size {
-                if colsUsed[c] { continue }
+            for c in 0..<size where !colsUsed[c] {
                 let rid = regionMap[row][c]
                 if regionUsed[rid] == true { continue }
+
                 var bad = false
-                for (pr, pc) in placed {
-                    if isAdjacentConflict(r1: pr, c1: pc, r2: row, c2: c) { bad = true; break }
+                for (pr, pc) in placed where isAdjacentConflict(pr, pc, row, c) {
+                    bad = true; break
                 }
                 if bad { continue }
 
@@ -308,10 +319,10 @@ fileprivate struct Solver {
 // MARK: - Region Generator
 
 fileprivate enum RegionGenerator {
-    static func generateRegionMap(size: Int,
-                                  regions: Int,
-                                  difficulty: Difficulty,
-                                  rng: inout RandomNumberGenerator) -> [[Int]] {
+    static func generateRegionMap<R: RandomNumberGenerator>(size: Int,
+                                                            regions: Int,
+                                                            difficulty: Difficulty,
+                                                            rng: inout R) -> [[Int]] {
         let regionCount = max(1, min(regions, size * size))
 
         var seeds: [(r: Int, c: Int)] = []
@@ -325,9 +336,7 @@ fileprivate enum RegionGenerator {
             }
         }
 
-        for _ in 0..<regionCount {
-            seeds.append(pickRandomEmpty())
-        }
+        for _ in 0..<regionCount { seeds.append(pickRandomEmpty()) }
 
         var map = Array(repeating: Array(repeating: -1, count: size), count: size)
         var fronts: [[(Int, Int)]] = Array(repeating: [], count: regionCount)
@@ -366,8 +375,8 @@ fileprivate enum RegionGenerator {
             for d in directions {
                 let nr = cell.0 + d.0
                 let nc = cell.1 + d.1
-                if nr >= 0, nr < size, nc >= 0, nc < size {
-                    if map[nr][nc] == -1 { neighbors.append((nr, nc)) }
+                if nr >= 0, nr < size, nc >= 0, nc < size, map[nr][nc] == -1 {
+                    neighbors.append((nr, nc))
                 }
             }
             if neighbors.isEmpty { continue }
@@ -380,6 +389,7 @@ fileprivate enum RegionGenerator {
             fronts[id].append(chosen)
         }
 
+        // Fill any stray -1 cells
         for r in 0..<size {
             for c in 0..<size where map[r][c] == -1 {
                 var assigned = false
@@ -398,22 +408,4 @@ fileprivate enum RegionGenerator {
 
         return map
     }
-}
-
-// MARK: - RNG Helpers
-
-fileprivate struct SplitMix64: RandomNumberGenerator {
-    private var state: UInt64
-    init(seed: UInt64) { state = seed &+ 0x9E3779B97F4A7C15 }
-    mutating func next() -> UInt64 {
-        state &+= 0x9E3779B97F4A7C15
-        var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
-        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
-        return z ^ (z >> 31)
-    }
-}
-
-fileprivate struct SystemRNG: RandomNumberGenerator {
-    mutating func next() -> UInt64 { UInt64.random(in: UInt64.min...UInt64.max) }
 }

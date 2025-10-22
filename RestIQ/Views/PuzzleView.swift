@@ -3,7 +3,7 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 12/10/25.
-//  Updated: Tight black border (no gap) and adaptive background.
+//  Updated: conflict toast overlay shows; small layout polish.
 //
 
 import SwiftUI
@@ -31,6 +31,7 @@ struct PuzzleView: View {
             }
             .padding(.top, isPad ? 40 : 16)
             .overlay(toastView, alignment: .top)
+            .overlay(conflictToast, alignment: .top)
             .overlay(loadingOverlay)
         }
         .toolbar {
@@ -41,7 +42,7 @@ struct PuzzleView: View {
         }
     }
 
-    // MARK: - Background (as requested)
+    // MARK: - Background
     private var adaptiveBackground: some View {
         ZStack {
             if colorScheme == .light {
@@ -116,6 +117,27 @@ struct PuzzleView: View {
         }
     }
 
+    // MARK: - Conflict Toast
+    @ViewBuilder
+    private var conflictToast: some View {
+        if let msg = viewModel.conflictMessage {
+            VStack {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow)
+                    Text(msg).font(.subheadline.weight(.semibold))
+                    Spacer()
+                }
+                .padding()
+                .background(.thinMaterial)
+                .cornerRadius(12)
+                .shadow(radius: 6)
+                .padding(.top, viewModel.showCompletion ? 84 : 32)
+                .padding(.horizontal, 32)
+            }
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
     // MARK: - Header
     private var headerView: some View {
         HStack {
@@ -124,12 +146,13 @@ struct PuzzleView: View {
                 .foregroundColor(.secondary)
             Spacer()
             Button {
-                Task { await MainActor.run { withAnimation(.easeInOut) { viewModel.resetBoard() } } }
+                withAnimation(.easeInOut) { viewModel.resetBoard() }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: isPad ? 24 : 18))
                     .foregroundColor(.secondary)
             }
+            .accessibilityLabel("Reset board")
         }
         .padding(.horizontal, isPad ? 100 : 20)
         .background(.ultraThinMaterial)
@@ -139,7 +162,7 @@ struct PuzzleView: View {
 
     // MARK: - Grid Container (no gap, thick black border)
     private var gridContainer: some View {
-        GeometryReader { geo in
+        GeometryReader { _ in
             ZStack {
                 // Outer thick black frame with zero padding
                 RoundedRectangle(cornerRadius: 10)
@@ -158,11 +181,11 @@ struct PuzzleView: View {
         .frame(maxWidth: isPad ? 720 : .infinity)
     }
 
-    // MARK: - Grid View (internal black separators)
+    // MARK: - Grid View
     private var gridView: some View {
         let size = viewModel.size
         return GeometryReader { geo in
-            let cellSize = min(geo.size.width, geo.size.height) / CGFloat(size)
+            let cellSize = min(geo.size.width, geo.size.height) / CGFloat(max(size, 1))
             VStack(spacing: 0) {
                 ForEach(0..<size, id: \.self) { row in
                     HStack(spacing: 0) {
