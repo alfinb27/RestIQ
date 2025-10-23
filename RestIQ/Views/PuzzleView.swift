@@ -3,9 +3,9 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 12/10/25.
-//  Updated: conflict toast overlay shows; small layout polish.
+//  Updated: scheme-aware gradients (purple in dark, orange in light) via AppTheme.
+//           Make Undo & Hint buttons exactly the same size.
 //
-
 import SwiftUI
 
 @available(iOS 18.0, *)
@@ -13,6 +13,8 @@ struct PuzzleView: View {
     let level: String
     @StateObject private var viewModel: PuzzleViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @State private var showSettingsSheet = false
+
     private var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
     init(level: String) {
@@ -22,17 +24,32 @@ struct PuzzleView: View {
 
     var body: some View {
         ZStack {
-            adaptiveBackground
+            // Themed background
+            ZStack {
+                AppTheme.backgroundGradient(colorScheme)
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .opacity(AppTheme.backgroundMaterialOpacity(colorScheme))
+                    .blendMode(.overlay)
+            }
+            .blur(radius: 45)
+            .ignoresSafeArea()
 
             VStack(spacing: isPad ? 20 : 12) {
-                headerView
+                headerBar
                 gridContainer
-                Spacer(minLength: isPad ? 60 : 20)
+                liquidControls
+                Spacer(minLength: isPad ? 40 : 16)
             }
             .padding(.top, isPad ? 40 : 16)
             .overlay(toastView, alignment: .top)
             .overlay(conflictToast, alignment: .top)
             .overlay(loadingOverlay)
+        }
+        .sheet(isPresented: $showSettingsSheet) {
+            settingsSheet
+                .presentationDetents([.medium, .large])
+                .presentationCornerRadius(20)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -40,40 +57,6 @@ struct PuzzleView: View {
                     .font(.system(size: isPad ? 22 : 18, weight: .bold, design: .rounded))
             }
         }
-    }
-
-    // MARK: - Background
-    private var adaptiveBackground: some View {
-        ZStack {
-            if colorScheme == .light {
-                LinearGradient(
-                    colors: [
-                        Color(.displayP3, red: 0.98, green: 0.65, blue: 0.30).opacity(0.55),
-                        Color(.displayP3, red: 0.98, green: 0.50, blue: 0.25).opacity(0.60),
-                        Color(.displayP3, red: 0.90, green: 0.35, blue: 0.30).opacity(0.55)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            } else {
-                LinearGradient(
-                    colors: [
-                        Color(.displayP3, red: 0.22, green: 0.20, blue: 0.28),
-                        Color(.displayP3, red: 0.18, green: 0.16, blue: 0.22),
-                        Color(.displayP3, red: 0.12, green: 0.10, blue: 0.16)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            }
-
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(colorScheme == .light ? 0.85 : 0.8)
-                .blendMode(.overlay)
-        }
-        .blur(radius: 45)
-        .ignoresSafeArea()
     }
 
     // MARK: - Loading Overlay
@@ -138,37 +121,61 @@ struct PuzzleView: View {
         }
     }
 
-    // MARK: - Header
-    private var headerView: some View {
-        HStack {
-            Label(viewModel.formattedElapsed(), systemImage: "clock")
-                .font(.system(size: isPad ? 22 : 16))
-                .foregroundColor(.secondary)
+    // MARK: - Header Bar (matches grid width)
+    private var headerBar: some View {
+        HStack(spacing: 12) {
+            if viewModel.showClock {
+                // Timer label gets scheme-aware liquid ink (purple in dark / orange in light)
+                Label(viewModel.formattedElapsed(), systemImage: "clock")
+                    .font(.system(size: isPad ? 22 : 16))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(AppTheme.liquidInk(colorScheme))
+            } else {
+                Spacer().frame(width: isPad ? 80 : 60)
+            }
+
             Spacer()
+
+            Button {
+                Haptics.soft()
+                showSettingsSheet = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: isPad ? 20 : 18, weight: .semibold))
+            }
+            .buttonStyle(LiquidGlassButtonStyle())
+
             Button {
                 withAnimation(.easeInOut) { viewModel.resetBoard() }
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: isPad ? 24 : 18))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: isPad ? 20 : 18))
             }
-            .accessibilityLabel("Reset board")
+            .buttonStyle(LiquidGlassButtonStyle())
+            .disabled(viewModel.isLoading)
         }
-        .padding(.horizontal, isPad ? 100 : 20)
-        .background(.ultraThinMaterial)
-        .cornerRadius(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+        )
         .shadow(radius: 3)
+        .frame(maxWidth: isPad ? 720 : .infinity)
+        .padding(.horizontal, isPad ? 80 : 20)
     }
 
-    // MARK: - Grid Container (no gap, thick black border)
+    // MARK: - Grid Container
     private var gridContainer: some View {
         GeometryReader { _ in
             ZStack {
-                // Outer thick black frame with zero padding
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(Color.black, lineWidth: isPad ? 10 : 8)
 
-                // Grid fills the interior exactly
                 gridView
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .padding(isPad ? 5 : 4)
@@ -204,13 +211,110 @@ struct PuzzleView: View {
                             .frame(width: cellSize, height: cellSize)
                             .contentShape(Rectangle())
                             .onTapGesture { viewModel.tapCell(row: row, col: col) }
-                            // thin black grid lines
                             .overlay(Rectangle().stroke(Color.black.opacity(0.25), lineWidth: 0.6))
                         }
                     }
                 }
             }
         }
+    }
+
+    // MARK: - Liquid Glass Controls (below grid)
+    private var liquidControls: some View {
+        let controlHeight: CGFloat = isPad ? 48 : 44
+
+        return HStack(spacing: 14) {
+            Button {
+                Haptics.soft()
+                viewModel.undo()
+            } label: {
+                Label("Undo", systemImage: "arrow.uturn.backward")
+                    .font(.system(size: isPad ? 18 : 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)              // equal width
+            }
+            .buttonStyle(LiquidGlassButtonStyle())
+            .frame(height: controlHeight)                     // equal height
+            .disabled(!viewModel.canUndo)
+
+            Button {
+                Haptics.light()
+                viewModel.revealHint()
+            } label: {
+                Label("Hint \(viewModel.hintsUsed)/\(viewModel.maxHints)", systemImage: "lightbulb")
+                    .font(.system(size: isPad ? 18 : 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)              // equal width
+            }
+            .buttonStyle(LiquidGlassButtonStyle())
+            .frame(height: controlHeight)                     // equal height
+            .disabled(viewModel.hintsUsed >= viewModel.maxHints || viewModel.isLoading)
+        }
+        .padding(.bottom, 120)
+        .frame(maxWidth: isPad ? 720 : .infinity)
+        .padding(.horizontal, isPad ? 80 : 20)
+    }
+
+    // MARK: - Settings Sheet
+    private var settingsSheet: some View {
+        NavigationStack {
+            Form {
+                Section(header: Text("Display")) {
+                    Toggle("Show clock", isOn: $viewModel.showClock)
+                }
+                Section(header: Text("Gameplay")) {
+                    Toggle("Auto-place crosses", isOn: $viewModel.autoPlaceCrosses)
+                        .tint(.orange)
+                    Text("Auto-place crosses will help by marking likely invalid cells automatically (coming soon).")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .navigationTitle("Options")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showSettingsSheet = false }
+                        .buttonStyle(LiquidGlassButtonStyle())
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Liquid Glass Button Style
+private struct LiquidGlassButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var colorScheme
+    var accent: Color? = nil
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.9)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.45), Color.white.opacity(0.08)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.8
+                    )
+            )
+            .overlay(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.25), .clear],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                .blur(radius: 1.2)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            )
+            .shadow(color: .black.opacity(0.18), radius: 6, x: 2, y: 3)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            // Use purple in dark mode for ALL text/icons; orange in light.
+            .foregroundStyle(AppTheme.liquidInk(colorScheme, accent: accent))
     }
 }
 

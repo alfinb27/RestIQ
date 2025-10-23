@@ -3,9 +3,8 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 12/10/25.
-//  Updated: minor tidy; profile button haptic.
+//  Updated: use AppTheme for background and gradients; all text/icons use purple tint in dark mode, orange in light.
 //
-
 import SwiftUI
 
 @available(iOS 18.0, *)
@@ -61,11 +60,7 @@ struct HomeView: View {
                 Image(systemName: "person")
                     .font(.system(size: 30))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(
-                        colorScheme == .light
-                        ? Color(.displayP3, red: 0.96, green: 0.3, blue: 0.36)
-                        : Color(.displayP3, red: 0.9, green: 0.6, blue: 0.9)
-                    )
+                    .foregroundStyle(AppTheme.liquidInk(colorScheme)) // scheme-aware (orange light / purple dark)
                     .background(
                         Circle()
                             .fill(.ultraThinMaterial)
@@ -77,34 +72,13 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Adaptive Background
+    // MARK: - Adaptive Background (via AppTheme)
     private var adaptiveBackground: some View {
         ZStack {
-            if colorScheme == .light {
-                LinearGradient(
-                    colors: [
-                        Color(.displayP3, red: 0.98, green: 0.65, blue: 0.30).opacity(0.55),
-                        Color(.displayP3, red: 0.98, green: 0.50, blue: 0.25).opacity(0.60),
-                        Color(.displayP3, red: 0.90, green: 0.35, blue: 0.30).opacity(0.55)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            } else {
-                LinearGradient(
-                    colors: [
-                        Color(.displayP3, red: 0.22, green: 0.20, blue: 0.28),
-                        Color(.displayP3, red: 0.18, green: 0.16, blue: 0.22),
-                        Color(.displayP3, red: 0.12, green: 0.10, blue: 0.16)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            }
-
+            AppTheme.backgroundGradient(colorScheme)
             Rectangle()
                 .fill(.ultraThinMaterial)
-                .opacity(colorScheme == .light ? 0.85 : 0.8)
+                .opacity(AppTheme.backgroundMaterialOpacity(colorScheme))
                 .blendMode(.overlay)
         }
         .blur(radius: 45)
@@ -117,21 +91,7 @@ struct HomeView: View {
             Text("RestIQ")
                 .font(.system(size: 50, weight: .bold, design: .rounded))
                 .multilineTextAlignment(.center)
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: colorScheme == .light
-                        ? [
-                            Color(.displayP3, red: 1.0, green: 0.7, blue: 0.4),
-                            Color(.displayP3, red: 0.96, green: 0.3, blue: 0.36)
-                        ]
-                        : [
-                            Color(.displayP3, red: 0.95, green: 0.6, blue: 0.5),
-                            Color(.displayP3, red: 0.9, green: 0.4, blue: 0.6)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .foregroundStyle(AppTheme.titleGradient(colorScheme)) // light: orange; dark: purple/rose
                 .shadow(color: .white.opacity(colorScheme == .light ? 0.25 : 0.1), radius: 8, x: 0, y: 2)
                 .shadow(color: .black.opacity(colorScheme == .light ? 0.15 : 0.5), radius: 4, x: 0, y: 3)
 
@@ -163,21 +123,7 @@ struct HomeView: View {
         VStack(spacing: 6) {
             Text("Streak: \(vm.streak) days")
                 .font(.footnote.weight(.medium))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: colorScheme == .light
-                        ? [
-                            Color(.displayP3, red: 1.0, green: 0.7, blue: 0.4),
-                            Color(.displayP3, red: 0.96, green: 0.3, blue: 0.36)
-                        ]
-                        : [
-                            Color(.displayP3, red: 0.9, green: 0.6, blue: 0.5),
-                            Color(.displayP3, red: 0.7, green: 0.4, blue: 0.8)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .foregroundStyle(AppTheme.footerTextGradient(colorScheme)) // light: orange; dark: purple
             Text("Last Played: \(vm.lastPlayedDisplay)")
                 .font(.caption2)
                 .foregroundColor(.secondary)
