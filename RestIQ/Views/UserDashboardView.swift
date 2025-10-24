@@ -3,6 +3,7 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 17/10/25.
+//  Updated: Added Debug Mode toggle to regenerate puzzles anytime.
 //
 
 import SwiftUI
@@ -11,6 +12,7 @@ import SwiftUI
 struct UserDashboardView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var debugConfig = DebugConfig.shared
 
     var body: some View {
         NavigationStack {
@@ -26,6 +28,7 @@ struct UserDashboardView: View {
                         VStack(spacing: 24) {
                             profileSection
                             dashboardOptions
+                            debugSection
                         }
                         .padding(.horizontal, 20)
                         .padding(.bottom, 20)
@@ -206,6 +209,27 @@ struct UserDashboardView: View {
                 .foregroundColor(.primary)
             Spacer()
             Image(systemName: "chevron.right")
+                .foregroundColor(.secondary)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                )
+        )
+        .shadow(color: .black.opacity(0.25), radius: 6, x: 2, y: 3)
+    }
+
+    // MARK: - Debug Section
+    private var debugSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("Enable Debug Mode", isOn: $debugConfig.debugMode)
+                .tint(.orange)
+            Text("When enabled, daily puzzles regenerate each time you open them.")
+                .font(.footnote)
                 .foregroundColor(.secondary)
         }
         .padding()

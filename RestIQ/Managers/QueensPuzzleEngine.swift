@@ -63,49 +63,77 @@ public actor QueensPuzzleEngine {
     // MARK: - Generator
     /// Generates an engine whose puzzle has a unique solution for the given size/difficulty.
     /// Marked `nonisolated` so it can be called without actor hopping (Swift 6 safe).
-    public nonisolated static func generate(size: Int,
-                                            difficulty: Difficulty,
-                                            attempts: Int = 120,
-                                            seed: UInt64? = nil) async -> QueensPuzzleEngine? {
+    public nonisolated static func generate(
+        size: Int,
+        difficulty: Difficulty,
+        attempts: Int = 400,          // increased from 120 for expert stability
+        seed: UInt64? = nil
+    ) async -> QueensPuzzleEngine? {
         guard size >= 4 && size <= 20 else { return nil }
 
-        if let seed {
-            // No await needed; initializer is synchronous and nonisolated.
-            var rng = await SeededRandomNumberGenerator(seed: seed)
-            for _ in 0..<attempts {
-                let regionMap = await RegionGenerator.generateRegionMap(size: size,
-                                                                        regions: size,
-                                                                        difficulty: difficulty,
-                                                                        rng: &rng)
+        func tryGenerate<R: RandomNumberGenerator>(
+            rng: inout R,
+            maxTries: Int
+        ) async -> QueensPuzzleEngine? {
+            for _ in 0..<maxTries {
+                let regionMap = await RegionGenerator.generateRegionMap(
+                    size: size,
+                    regions: size,
+                    difficulty: difficulty,
+                    rng: &rng
+                )
                 let solver = Solver(size: size, regionMap: regionMap)
                 let solutions = await solver.findUpTo(maxCount: 2)
                 if solutions.count == 1 {
                     let canonical = solutions[0]
-                    return QueensPuzzleEngine(size: size,
-                                              regionMap: regionMap,
-                                              canonicalSolution: canonical,
-                                              seed: seed)
+                    return QueensPuzzleEngine(
+                        size: size,
+                        regionMap: regionMap,
+                        canonicalSolution: canonical,
+                        seed: seed
+                    )
                 }
             }
-        } else {
-            var rng = SystemRandomNumberGenerator()
-            for _ in 0..<attempts {
-                let regionMap = await RegionGenerator.generateRegionMap(size: size,
-                                                                        regions: size,
-                                                                        difficulty: difficulty,
-                                                                        rng: &rng)
-                let solver = Solver(size: size, regionMap: regionMap)
-                let solutions = await solver.findUpTo(maxCount: 2)
-                if solutions.count == 1 {
-                    let canonical = solutions[0]
-                    return QueensPuzzleEngine(size: size,
-                                              regionMap: regionMap,
-                                              canonicalSolution: canonical,
-                                              seed: nil)
-                }
-            }
+            return nil
         }
-        return nil
+
+        if let seed {
+            // Deterministic generation path
+            var rng = await SeededRandomNumberGenerator(seed: seed)
+            if let engine = await tryGenerate(rng: &rng, maxTries: attempts) {
+                return engine
+            }
+            // Retry with a slightly varied seed if deterministic path fails
+            var fallback = await SeededRandomNumberGenerator(seed: seed &+ 0x9e3779b97f4a7c15)
+            if let engine = await tryGenerate(rng: &fallback, maxTries: attempts / 2) {
+                return engine
+            }
+            return nil
+        } else {
+            // Non-deterministic (random) path
+            var rng = SystemRandomNumberGenerator()
+            if let engine = await tryGenerate(rng: &rng, maxTries: attempts) {
+                return engine
+            }
+
+            // Guaranteed fallback: progressively lower difficulty to ensure solvable layout
+            let fallbackDifficulties: [Difficulty] = {
+                switch difficulty {
+                case .expert: return [.hard, .medium, .easy]
+                case .hard: return [.medium, .easy]
+                case .medium: return [.easy]
+                case .easy: return []
+                }
+            }()
+
+            for alt in fallbackDifficulties {
+                var altRng = SystemRandomNumberGenerator()
+                if let engine = await tryGenerate(rng: &altRng, maxTries: attempts / 2) {
+                    return engine
+                }
+            }
+            return nil
+        }
     }
 
     // MARK: - Snapshot

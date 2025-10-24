@@ -18,4 +18,3 @@ struct SeededRandomNumberGenerator: RandomNumberGenerator, Sendable {
         return state
     }
 }
-

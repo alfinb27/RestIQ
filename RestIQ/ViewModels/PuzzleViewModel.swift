@@ -3,8 +3,8 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 16/10/25.
-//  Updated: Undo/Hint UI state, settings toggles (showClock, autoPlaceCrosses).
-//
+//  Updated: drag cross undo grouping support. setCross now records undo; beginCrossDrag()/endCrossDrag() available for grouping.
+///
 
 import Foundation
 import SwiftUI
@@ -18,24 +18,33 @@ final class PuzzleViewModel: ObservableObject {
     @Published var showCompletion = false
     @Published var isLoading = true
     @Published var elapsedSeconds = 0
-    @Published var conflictMessage: String? = nil
 
     // Settings toggles (gear sheet)
     @Published var showClock: Bool = true
-    @Published var autoPlaceCrosses: Bool = false // reserved for future logic
+    @Published var autoPlaceCrosses: Bool = false
 
     // Undo / Hint state
     @Published private(set) var canUndo = false
     @Published private(set) var hintsUsed = 0
     let maxHints = 3
 
-    private var undoStack: [[CellChange]] = [] // each entry is a reversible group
-
+    private var undoStack: [[CellChange]] = []
     private var timerTask: Task<Void, Never>?
     private var engine: QueensPuzzleEngine?
     private let gridSize: Int
     private let difficulty: Difficulty
     private let level: String
+
+    // Drag undo grouping: collect changes during a drag then push as single undo group
+    private var currentDragUndoGroup: [CellChange]? = nil
+
+    // Conflict highlighting only (no toast)
+    @Published private(set) var invalidPositions: Set<BoardPos> = []
+
+    struct BoardPos: Hashable {
+        let r: Int
+        let c: Int
+    }
 
     init(level: String) {
         self.level = level
@@ -72,6 +81,7 @@ final class PuzzleViewModel: ObservableObject {
         canUndo = false
         hintsUsed = 0
         elapsedSeconds = 0
+        invalidPositions = []
         startTimer()
     }
 
@@ -87,13 +97,11 @@ final class PuzzleViewModel: ObservableObject {
             // allow undo for a single tap
             pushUndoGroup([CellChange(row: row, col: col, newState: prev)])
 
-            // Conflict detection toast + haptic
+            // Only highlight conflicts + haptic, no toast message
             if board[row][col] == .queen {
                 let conflicts = await engine.conflictTypesForQueen(at: row, col: col)
                 if !conflicts.isEmpty {
-                    conflictMessage = "Conflict: " + conflicts.joined(separator: ", ")
                     Haptics.warning()
-                    dismissToastAfterDelay()
                 }
             }
 
@@ -104,6 +112,53 @@ final class PuzzleViewModel: ObservableObject {
                 Haptics.success()
                 showCompletion = true
             }
+        }
+    }
+
+    // MARK: - Drag grouping API
+    /// Call when drag across grid begins (e.g., on drag start).
+    func beginCrossDrag() {
+        // start a new group; if a previous group exists, discard it (shouldn't happen)
+        currentDragUndoGroup = []
+    }
+
+    /// Call when drag ends (e.g., on drag end) to commit the group to undo stack.
+    func endCrossDrag() {
+        if let group = currentDragUndoGroup, !group.isEmpty {
+            pushUndoGroup(group)
+        }
+        currentDragUndoGroup = nil
+    }
+
+    // MARK: - Cross Setter (used for drag)
+    /// Sets a cross (.markedX) or clears it (.empty). Records undo.
+    func setCross(row: Int, col: Int, state: CellState) {
+        guard let engine else { return }
+        Task {
+            // capture previous state for undo
+            let previous = board[row][col]
+            // if no-op, skip
+            if previous == state { return }
+
+            if let change = await engine.setCell(state, row: row, col: col) {
+                board[change.row][change.col] = change.newState
+            } else {
+                board[row][col] = state
+            }
+
+            // Build reverse change (to restore previous state on undo)
+            let reverse = CellChange(row: row, col: col, newState: previous)
+
+            if var group = currentDragUndoGroup {
+                // append to existing drag group
+                group.append(reverse)
+                currentDragUndoGroup = group
+            } else {
+                // single change, push immediately as its own undo group
+                pushUndoGroup([reverse])
+            }
+
+            await computeInvalidPositions()
         }
     }
 
@@ -180,13 +235,6 @@ final class PuzzleViewModel: ObservableObject {
     }
 
     // MARK: - Invalid Position Tracking
-    @Published private(set) var invalidPositions: Set<BoardPos> = []
-
-    struct BoardPos: Hashable {
-        let r: Int
-        let c: Int
-    }
-
     private func computeInvalidPositions() async {
         guard let engine else { return }
         var invalid = Set<BoardPos>()
@@ -215,18 +263,10 @@ final class PuzzleViewModel: ObservableObject {
             }
             elapsedSeconds = 0
             invalidPositions = []
-            conflictMessage = nil
             undoStack.removeAll()
             canUndo = false
             hintsUsed = 0
             startTimer()
-        }
-    }
-
-    // MARK: - Toast
-    private func dismissToastAfterDelay() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            self.conflictMessage = nil
         }
     }
 
@@ -250,14 +290,27 @@ final class PuzzleViewModel: ObservableObject {
         String(format: "%d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)
     }
 
-    // MARK: - Region Colors
+    // MARK: - Region Colors (uses your pastel palette)
     private func buildRegionColors() {
         let ids = Set(regionMap.flatMap { $0 })
         var colors: [Int: Color] = [:]
-        for id in ids.sorted() {
-            let hue = Double((id * 37) % 360) / 360.0
-            colors[id] = Color(hue: hue, saturation: 0.45, brightness: 0.92).opacity(0.35)
+
+        let palette: [Color] = [
+            Color(.displayP3, red: 205/255, green: 190/255, blue: 245/255), // violet
+            Color(.displayP3, red: 245/255, green: 195/255, blue: 215/255), // pink
+            Color(.displayP3, red: 191/255, green: 224/255, blue: 187/255), // green
+            Color(.displayP3, red: 188/255, green: 211/255, blue: 247/255), // blue
+            Color(.displayP3, red: 250/255, green: 242/255, blue: 185/255), // yellow
+            Color(.displayP3, red: 240/255, green: 160/255, blue: 160/255), // red
+            Color(.displayP3, red: 250/255, green: 195/255, blue: 155/255), // orange
+            Color(.displayP3, red: 190/255, green: 190/255, blue: 190/255), // grey
+            Color(.displayP3, red: 185/255, green: 235/255, blue: 235/255)  // cyan
+        ]
+
+        for (i, id) in ids.sorted().enumerated() {
+            colors[id] = palette[i % palette.count].opacity(0.75)
         }
+
         regionColors = colors
     }
 

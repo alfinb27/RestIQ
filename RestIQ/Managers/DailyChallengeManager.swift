@@ -45,12 +45,16 @@ final class DailyChallengeManager {
     func generateDailyPuzzle(for level: String) async -> QueensPuzzleEngine? {
         // Invalidate cache if the day changed
         let today = dayKey()
-        if cachedDayKey != today {
+        let debug = await MainActor.run { DebugConfig.shared.debugMode }
+
+        if cachedDayKey != today && !debug {
             cachedEngines.removeAll()
             cachedDayKey = today
         }
 
-        if let existing = cachedEngines[level] { return existing }
+        if let existing = cachedEngines[level], !debug {
+            return existing
+        }
 
         let size: Int
         let difficulty: Difficulty
@@ -62,10 +66,25 @@ final class DailyChallengeManager {
         default: size = 6; difficulty = .easy
         }
 
-        let seed = dailySeed(size: size, levelKey: level)
-        guard let engine = await QueensPuzzleEngine.generate(size: size, difficulty: difficulty, seed: seed) else {
+        // Determine seed
+        let seed: UInt64
+        if debug {
+            // Random seed in debug mode so puzzle changes each call
+            seed = UInt64.random(in: 0..<UInt64.max)
+        } else {
+            // Stable daily seed otherwise
+            seed = dailySeed(size: size, levelKey: level)
+        }
+
+        // Generate puzzle
+        guard let engine = await QueensPuzzleEngine.generate(
+            size: size,
+            difficulty: difficulty,
+            seed: seed
+        ) else {
             return nil
         }
+
         cachedEngines[level] = engine
         return engine
     }

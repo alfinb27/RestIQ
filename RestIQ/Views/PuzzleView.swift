@@ -3,9 +3,9 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 12/10/25.
-//  Updated: scheme-aware gradients (purple in dark, orange in light) via AppTheme.
-//           Make Undo & Hint buttons exactly the same size.
+//  Updated: drag-to-toggle crosses with accurate grid mapping and fixed tap handling.
 //
+
 import SwiftUI
 
 @available(iOS 18.0, *)
@@ -14,6 +14,11 @@ struct PuzzleView: View {
     @StateObject private var viewModel: PuzzleViewModel
     @Environment(\.colorScheme) private var colorScheme
     @State private var showSettingsSheet = false
+
+    // Drag state
+    @State private var isDragging = false
+    @State private var lastDragCell: PuzzleViewModel.BoardPos?
+    @State private var dragActionIsPlacing = true
 
     private var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
@@ -43,8 +48,7 @@ struct PuzzleView: View {
             }
             .padding(.top, isPad ? 40 : 16)
             .overlay(toastView, alignment: .top)
-            .overlay(conflictToast, alignment: .top)
-            .overlay(loadingOverlay)
+             .overlay(loadingOverlay)
         }
         .sheet(isPresented: $showSettingsSheet) {
             settingsSheet
@@ -76,7 +80,7 @@ struct PuzzleView: View {
         }
     }
 
-    // MARK: - Completion Toast
+    // MARK: - Toasts
     @ViewBuilder
     private var toastView: some View {
         if viewModel.showCompletion {
@@ -100,32 +104,10 @@ struct PuzzleView: View {
         }
     }
 
-    // MARK: - Conflict Toast
-    @ViewBuilder
-    private var conflictToast: some View {
-        if let msg = viewModel.conflictMessage {
-            VStack {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow)
-                    Text(msg).font(.subheadline.weight(.semibold))
-                    Spacer()
-                }
-                .padding()
-                .background(.thinMaterial)
-                .cornerRadius(12)
-                .shadow(radius: 6)
-                .padding(.top, viewModel.showCompletion ? 84 : 32)
-                .padding(.horizontal, 32)
-            }
-            .transition(.move(edge: .top).combined(with: .opacity))
-        }
-    }
-
-    // MARK: - Header Bar (matches grid width)
+    // MARK: - Header Bar
     private var headerBar: some View {
         HStack(spacing: 12) {
             if viewModel.showClock {
-                // Timer label gets scheme-aware liquid ink (purple in dark / orange in light)
                 Label(viewModel.formattedElapsed(), systemImage: "clock")
                     .font(.system(size: isPad ? 22 : 16))
                     .symbolRenderingMode(.hierarchical)
@@ -171,55 +153,103 @@ struct PuzzleView: View {
 
     // MARK: - Grid Container
     private var gridContainer: some View {
-        GeometryReader { _ in
+        GeometryReader { geo in
+            let gridSize = viewModel.size
+            // use actual available width minus horizontal padding
+            let availableWidth = min(geo.size.width, UIScreen.main.bounds.width - (isPad ? 160 : 40))
+            let side = min(availableWidth, geo.size.height)
+            let cell = side / CGFloat(gridSize)
+
             ZStack {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(Color.black, lineWidth: isPad ? 10 : 8)
 
-                gridView
+                gridView(cellSize: cell)
+                    .frame(width: side, height: side)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .padding(isPad ? 5 : 4)
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                handleDrag(location: value.location,
+                                           gridSize: gridSize,
+                                           cellSize: cell,
+                                           in: CGSize(width: side, height: side))
+                            }
+                            .onEnded { _ in
+                                isDragging = false
+                                lastDragCell = nil
+                            }
+                    )
             }
-            .aspectRatio(1, contentMode: .fit)
+            // maintain square aspect ratio and center it
+            .frame(width: side, height: side, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .center)
             .padding(.horizontal, isPad ? 80 : 20)
             .shadow(color: .black.opacity(colorScheme == .dark ? 0.4 : 0.1),
                     radius: 12, x: 0, y: 4)
         }
-        .frame(maxWidth: isPad ? 720 : .infinity)
+        // constrain height to prevent overflow
+        .frame(height: UIScreen.main.bounds.width - (isPad ? 160 : 40))
     }
 
     // MARK: - Grid View
-    private var gridView: some View {
-        let size = viewModel.size
-        return GeometryReader { geo in
-            let cellSize = min(geo.size.width, geo.size.height) / CGFloat(max(size, 1))
-            VStack(spacing: 0) {
-                ForEach(0..<size, id: \.self) { row in
-                    HStack(spacing: 0) {
-                        ForEach(0..<size, id: \.self) { col in
-                            let cell = viewModel.board[safe: row]?[safe: col] ?? .empty
-                            let regionID = viewModel.regionMap[safe: row]?[safe: col] ?? 0
-                            let color = viewModel.regionColors[regionID] ?? .gray.opacity(0.25)
-                            let isInvalid = viewModel.isPositionInvalid(row, col)
+    private func gridView(cellSize: CGFloat) -> some View {
+        let gridSize = viewModel.size
+        return VStack(spacing: 0) {
+            ForEach(0..<gridSize, id: \.self) { r in
+                HStack(spacing: 0) {
+                    ForEach(0..<gridSize, id: \.self) { c in
+                        let cell = viewModel.board[safe: r]?[safe: c] ?? .empty
+                        let regionID = viewModel.regionMap[safe: r]?[safe: c] ?? 0
+                        let color = viewModel.regionColors[regionID] ?? .gray.opacity(0.25)
+                        let isInvalid = viewModel.isPositionInvalid(r, c)
 
-                            PuzzleCellView(
-                                cell: cell,
-                                regionColor: color,
-                                isInvalid: isInvalid,
-                                isPad: isPad
-                            )
-                            .frame(width: cellSize, height: cellSize)
-                            .contentShape(Rectangle())
-                            .onTapGesture { viewModel.tapCell(row: row, col: col) }
-                            .overlay(Rectangle().stroke(Color.black.opacity(0.25), lineWidth: 0.6))
+                        PuzzleCellView(
+                            cell: cell,
+                            regionColor: color,
+                            isInvalid: isInvalid,
+                            isPad: isPad
+                        )
+                        .frame(width: cellSize, height: cellSize)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            viewModel.tapCell(row: r, col: c)
                         }
+                        .overlay(Rectangle().stroke(Color.black.opacity(0.25), lineWidth: 0.6))
                     }
                 }
             }
         }
     }
 
-    // MARK: - Liquid Glass Controls (below grid)
+    // MARK: - Drag Handling
+    private func handleDrag(location: CGPoint, gridSize: Int, cellSize: CGFloat, in grid: CGSize) {
+        let x = max(0, min(location.x, grid.width - 1))
+        let y = max(0, min(location.y, grid.height - 1))
+        let col = Int(x / cellSize)
+        let row = Int(y / cellSize)
+        guard row >= 0, row < gridSize, col >= 0, col < gridSize else { return }
+
+        let current = PuzzleViewModel.BoardPos(r: row, c: col)
+        guard current != lastDragCell else { return }
+
+        let currentState = viewModel.board[row][col]
+        if !isDragging {
+            // First drag contact defines action type
+            dragActionIsPlacing = (currentState != .markedX)
+            isDragging = true
+        }
+
+        if dragActionIsPlacing {
+            viewModel.setCross(row: row, col: col, state: .markedX)
+        } else {
+            viewModel.setCross(row: row, col: col, state: .empty)
+        }
+
+        lastDragCell = current
+    }
+
+    // MARK: - Liquid Controls
     private var liquidControls: some View {
         let controlHeight: CGFloat = isPad ? 48 : 44
 
@@ -230,10 +260,10 @@ struct PuzzleView: View {
             } label: {
                 Label("Undo", systemImage: "arrow.uturn.backward")
                     .font(.system(size: isPad ? 18 : 16, weight: .semibold))
-                    .frame(maxWidth: .infinity)              // equal width
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(LiquidGlassButtonStyle())
-            .frame(height: controlHeight)                     // equal height
+            .frame(height: controlHeight)
             .disabled(!viewModel.canUndo)
 
             Button {
@@ -242,10 +272,10 @@ struct PuzzleView: View {
             } label: {
                 Label("Hint \(viewModel.hintsUsed)/\(viewModel.maxHints)", systemImage: "lightbulb")
                     .font(.system(size: isPad ? 18 : 16, weight: .semibold))
-                    .frame(maxWidth: .infinity)              // equal width
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(LiquidGlassButtonStyle())
-            .frame(height: controlHeight)                     // equal height
+            .frame(height: controlHeight)
             .disabled(viewModel.hintsUsed >= viewModel.maxHints || viewModel.isLoading)
         }
         .padding(.bottom, 120)
@@ -263,7 +293,7 @@ struct PuzzleView: View {
                 Section(header: Text("Gameplay")) {
                     Toggle("Auto-place crosses", isOn: $viewModel.autoPlaceCrosses)
                         .tint(.orange)
-                    Text("Auto-place crosses will help by marking likely invalid cells automatically (coming soon).")
+                    Text("Drag across the grid to toggle crosses (X) on or off accurately.")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
@@ -313,7 +343,6 @@ private struct LiquidGlassButtonStyle: ButtonStyle {
             )
             .shadow(color: .black.opacity(0.18), radius: 6, x: 2, y: 3)
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            // Use purple in dark mode for ALL text/icons; orange in light.
             .foregroundStyle(AppTheme.liquidInk(colorScheme, accent: accent))
     }
 }
@@ -344,7 +373,8 @@ private struct PuzzleCellView: View {
             case .markedX:
                 Text("×")
                     .font(.system(size: isPad ? 32 : 22))
-                    .foregroundColor(.gray)
+                    .fontWeight(.thin)
+                    .foregroundColor(.black)
             default:
                 EmptyView()
             }
@@ -356,7 +386,6 @@ private struct PuzzleCellView: View {
     }
 }
 
-// MARK: - Preview
 #Preview("Easy") {
     NavigationStack { PuzzleView(level: "Easy") }
 }
