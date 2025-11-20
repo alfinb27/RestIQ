@@ -9,14 +9,13 @@ import SwiftUI
 
 @available(iOS 18.0, *)
 struct HomeView: View {
-    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var vm = HomeViewModel()
     @State private var showUserDashboard = false
 
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
-                adaptiveBackground
+                AppBackground()
                     .allowsHitTesting(false)
 
                 VStack(spacing: 8) {
@@ -44,8 +43,7 @@ struct HomeView: View {
                     .presentationDetents([.large])
                     .presentationCornerRadius(24)
             }
-            .navigationTitle("")
-            .navigationBarHidden(true)
+            .toolbar(.hidden, for: .navigationBar)
         }
     }
 
@@ -60,7 +58,7 @@ struct HomeView: View {
                 Image(systemName: "person")
                     .font(.system(size: 30))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(AppTheme.liquidInk(colorScheme)) // scheme-aware (orange light / purple dark)
+                    .foregroundStyle(AppTheme.liquidInk()) // scheme-aware
                     .background(
                         Circle()
                             .fill(.ultraThinMaterial)
@@ -72,28 +70,16 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Adaptive Background (via AppTheme)
-    private var adaptiveBackground: some View {
-        ZStack {
-            AppTheme.backgroundGradient(colorScheme)
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(AppTheme.backgroundMaterialOpacity(colorScheme))
-                .blendMode(.overlay)
-        }
-        .blur(radius: 45)
-        .ignoresSafeArea()
-    }
-
     // MARK: - Title Section
     private var titleSection: some View {
         VStack(alignment: .center, spacing: 6) {
             Text("RestIQ")
                 .font(.system(size: 50, weight: .bold, design: .rounded))
                 .multilineTextAlignment(.center)
-                .foregroundStyle(AppTheme.titleGradient(colorScheme)) // light: orange; dark: purple/rose
-                .shadow(color: .white.opacity(colorScheme == .light ? 0.25 : 0.1), radius: 8, x: 0, y: 2)
-                .shadow(color: .black.opacity(colorScheme == .light ? 0.15 : 0.5), radius: 4, x: 0, y: 3)
+                .foregroundStyle(AppTheme.titleGradient()) // scheme-aware
+                .shadow(color: .white.opacity(0.1), radius: 8, x: 0, y: 2)
+                .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 3)
+
 
             Text("Daily puzzles to refresh your mind")
                 .font(.subheadline.weight(.medium))
@@ -123,7 +109,7 @@ struct HomeView: View {
         VStack(spacing: 6) {
             Text("Streak: \(vm.streak) days")
                 .font(.footnote.weight(.medium))
-                .foregroundStyle(AppTheme.footerTextGradient(colorScheme)) // light: orange; dark: purple
+                .foregroundStyle(AppTheme.footerTextGradient()) // scheme-aware
             Text("Last Played: \(vm.lastPlayedDisplay)")
                 .font(.caption2)
                 .foregroundColor(.secondary)

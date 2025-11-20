@@ -12,7 +12,6 @@ import SwiftUI
 struct PuzzleView: View {
     let level: String
     @StateObject private var viewModel: PuzzleViewModel
-    @Environment(\.colorScheme) private var colorScheme
     @State private var showSettingsSheet = false
 
     // Drag state
@@ -29,16 +28,8 @@ struct PuzzleView: View {
 
     var body: some View {
         ZStack {
-            // Themed background
-            ZStack {
-                AppTheme.backgroundGradient(colorScheme)
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .opacity(AppTheme.backgroundMaterialOpacity(colorScheme))
-                    .blendMode(.overlay)
-            }
-            .blur(radius: 45)
-            .ignoresSafeArea()
+            AppBackground()
+                .ignoresSafeArea()
 
             VStack(spacing: isPad ? 20 : 12) {
                 headerBar
@@ -111,7 +102,7 @@ struct PuzzleView: View {
                 Label(viewModel.formattedElapsed(), systemImage: "clock")
                     .font(.system(size: isPad ? 22 : 16))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(AppTheme.liquidInk(colorScheme))
+                    .foregroundStyle(AppTheme.liquidInk())
             } else {
                 Spacer().frame(width: isPad ? 80 : 60)
             }
@@ -155,16 +146,14 @@ struct PuzzleView: View {
     private var gridContainer: some View {
         GeometryReader { geo in
             let gridSize = viewModel.size
-            // use actual available width minus horizontal padding
-            let availableWidth = min(geo.size.width, UIScreen.main.bounds.width - (isPad ? 160 : 40))
-            let side = min(availableWidth, geo.size.height)
-            let cell = side / CGFloat(gridSize)
+            let side = geo.size.width
+            let cellSize = side / CGFloat(gridSize)
 
             ZStack {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(Color.black, lineWidth: isPad ? 10 : 8)
 
-                gridView(cellSize: cell)
+                gridView(cellSize: cellSize)
                     .frame(width: side, height: side)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .gesture(
@@ -172,24 +161,22 @@ struct PuzzleView: View {
                             .onChanged { value in
                                 handleDrag(location: value.location,
                                            gridSize: gridSize,
-                                           cellSize: cell,
-                                           in: CGSize(width: side, height: side))
+                                           cellSize: cellSize,
+                                           in: geo.size)
                             }
                             .onEnded { _ in
+                                viewModel.endCrossDrag()
                                 isDragging = false
                                 lastDragCell = nil
                             }
                     )
             }
-            // maintain square aspect ratio and center it
             .frame(width: side, height: side, alignment: .center)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.horizontal, isPad ? 80 : 20)
-            .shadow(color: .black.opacity(colorScheme == .dark ? 0.4 : 0.1),
-                    radius: 12, x: 0, y: 4)
         }
-        // constrain height to prevent overflow
-        .frame(height: UIScreen.main.bounds.width - (isPad ? 160 : 40))
+        .aspectRatio(1.0, contentMode: .fit) // Ensures the grid is always square
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.horizontal, isPad ? 80 : 20)
+        .shadow(color: .black.opacity(0.2), radius: 12, x: 0, y: 4)
     }
 
     // MARK: - Grid View
@@ -233,9 +220,10 @@ struct PuzzleView: View {
         let current = PuzzleViewModel.BoardPos(r: row, c: col)
         guard current != lastDragCell else { return }
 
-        let currentState = viewModel.board[row][col]
         if !isDragging {
-            // First drag contact defines action type
+            // First drag contact defines action type and starts undo group
+            let currentState = viewModel.board[row][col]
+            viewModel.beginCrossDrag()
             dragActionIsPlacing = (currentState != .markedX)
             isDragging = true
         }
@@ -311,7 +299,6 @@ struct PuzzleView: View {
 
 // MARK: - Liquid Glass Button Style
 private struct LiquidGlassButtonStyle: ButtonStyle {
-    @Environment(\.colorScheme) private var colorScheme
     var accent: Color? = nil
 
     func makeBody(configuration: Configuration) -> some View {
@@ -343,7 +330,7 @@ private struct LiquidGlassButtonStyle: ButtonStyle {
             )
             .shadow(color: .black.opacity(0.18), radius: 6, x: 2, y: 3)
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .foregroundStyle(AppTheme.liquidInk(colorScheme, accent: accent))
+            .foregroundStyle(AppTheme.liquidInk(accent: accent))
     }
 }
 

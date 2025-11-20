@@ -12,7 +12,7 @@ import SwiftUI
 enum AppTheme {
 
     // MARK: - Base Palette (Display P3-safe)
-    enum Palette {
+    private enum Palette {
         // Brand oranges/rose used across the app (light mode)
         static let orangeLight  = Color(.displayP3, red: 0.98, green: 0.65, blue: 0.30)
         static let orange       = Color(.displayP3, red: 0.98, green: 0.50, blue: 0.25)
@@ -40,25 +40,57 @@ enum AppTheme {
         static let footerDarkB  = Color(.displayP3, red: 0.70, green: 0.40, blue: 0.80)
     }
 
+    /// A helper that resolves a gradient based on the current color scheme.
+    /// It conforms to both View and ShapeStyle to be used in any context.
+    private struct ThemedGradient: View, ShapeStyle {
+        @Environment(\.colorScheme) private var colorScheme
+        let light: LinearGradient
+        let dark: LinearGradient
+
+        // ShapeStyle conformance
+        func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
+            if environment.colorScheme == .light {
+                return light
+            } else {
+                return dark
+            }
+        }
+        
+        // View conformance
+        var body: some View {
+            if colorScheme == .light {
+                light
+            } else {
+                dark
+            }
+        }
+    }
+
+    /// The primary brand gradient for light mode, used in multiple places.
+    private static let lightBrandGradient = LinearGradient(
+        colors: [Palette.roseLightA, Palette.roseLightB],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
     // MARK: - Backgrounds
 
     /// App background gradient behind material overlay.
-    static func backgroundGradient(_ scheme: ColorScheme) -> LinearGradient {
-        if scheme == .light {
-            return LinearGradient(
+    static func backgroundGradient() -> some View {
+        ThemedGradient(
+            light: LinearGradient(
                 colors: [
                     Palette.orangeLight.opacity(0.55),
                     Palette.orange.opacity(0.60),
                     Palette.coral.opacity(0.55)
                 ],
                 startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-        } else {
-            return LinearGradient(
+            ),
+            dark: LinearGradient(
                 colors: [Palette.darkA, Palette.darkB, Palette.darkC],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             )
-        }
+        )
     }
 
     /// A thin material overlay opacity tuned per scheme for the frosted effect.
@@ -69,79 +101,68 @@ enum AppTheme {
     // MARK: - Title / Headline Gradients
 
     /// Big “RestIQ” title gradient.
-    static func titleGradient(_ scheme: ColorScheme) -> LinearGradient {
-        if scheme == .light {
-            return LinearGradient(
-                colors: [Palette.roseLightA, Palette.roseLightB],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-        } else {
-            return LinearGradient(
+    static func titleGradient() -> some ShapeStyle {
+        ThemedGradient(
+            light: lightBrandGradient,
+            dark: LinearGradient(
                 colors: [Palette.roseDarkA, Palette.roseDarkB],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             )
-        }
+        )
     }
 
     /// Footer “Streak” text gradient.
-    static func footerTextGradient(_ scheme: ColorScheme) -> LinearGradient {
-        if scheme == .light {
-            return LinearGradient(
-                colors: [Palette.roseLightA, Palette.roseLightB],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-        } else {
-            return LinearGradient(
+    static func footerTextGradient() -> some ShapeStyle {
+        ThemedGradient(
+            light: lightBrandGradient,
+            dark: LinearGradient(
                 colors: [Palette.footerDarkA, Palette.footerDarkB],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             )
-        }
+        )
     }
 
     // MARK: - Liquid Accent (for buttons / icons / labels)
 
-    /// Scheme-aware liquid gradient ink:
+    /// Scheme-aware liquid gradient ink.
     /// - Light mode: orange/rose (brand)
     /// - Dark mode: purple tint (as requested)
-    static func liquidInk(_ scheme: ColorScheme) -> LinearGradient {
-        if scheme == .light {
-            return LinearGradient(
-                colors: [Palette.roseLightA, Palette.roseLightB],
-                startPoint: .topLeading, endPoint: .bottomTrailing
+    /// - accent: An optional override color for light mode only.
+    static func liquidInk(accent: Color? = nil) -> some ShapeStyle {
+        let darkGradient = LinearGradient(
+            colors: [Palette.purpleA, Palette.purpleB],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        
+        let themed: ThemedGradient
+        if let accent {
+            themed = ThemedGradient(
+                light: LinearGradient(
+                    colors: [accent, accent.opacity(0.7)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ),
+                dark: darkGradient
             )
         } else {
-            return LinearGradient(
-                colors: [Palette.purpleA, Palette.purpleB],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
+            themed = ThemedGradient(light: lightBrandGradient, dark: darkGradient)
         }
-    }
-
-    /// Variant liquid gradient ink using a single accent in LIGHT mode; DARK mode always uses purple.
-    static func liquidInk(_ scheme: ColorScheme, accent: Color?) -> LinearGradient {
-        if scheme == .dark {
-            return liquidInk(.dark) // force purple in dark mode
-        }
-        if let accent {
-            return LinearGradient(
-                colors: [accent, accent.opacity(0.7)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-        }
-        return liquidInk(.light)
+        return themed
     }
 }
 
-// MARK: - Convenience Extensions
+// MARK: - Reusable Background View
 
-extension View {
-    /// App-wide background with frosted overlay.
-    func appBackground(_ scheme: ColorScheme) -> some View {
+/// A reusable view that displays the app's standard themed background.
+struct AppBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
         ZStack {
-            AppTheme.backgroundGradient(scheme)
+            AppTheme.backgroundGradient()
             Rectangle()
                 .fill(.ultraThinMaterial)
-                .opacity(AppTheme.backgroundMaterialOpacity(scheme))
+                .opacity(AppTheme.backgroundMaterialOpacity(colorScheme))
                 .blendMode(.overlay)
         }
         .blur(radius: 45)

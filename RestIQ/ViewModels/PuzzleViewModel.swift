@@ -21,8 +21,12 @@ final class PuzzleViewModel: ObservableObject {
 
     // Settings toggles (gear sheet)
     @Published var showClock: Bool = true
-    @Published var autoPlaceCrosses: Bool = false
-
+    // Persisted toggle for auto cross placement
+    @Published var autoPlaceCrosses: Bool {
+        didSet {
+            UserDefaults.standard.set(autoPlaceCrosses, forKey: "autoPlaceCrossesEnabled")
+        }
+    }
     // Undo / Hint state
     @Published private(set) var canUndo = false
     @Published private(set) var hintsUsed = 0
@@ -55,6 +59,8 @@ final class PuzzleViewModel: ObservableObject {
         case "Expert": gridSize = 9; difficulty = .expert
         default: gridSize = 6; difficulty = .easy
         }
+        self.autoPlaceCrosses = UserDefaults.standard.bool(forKey: "autoPlaceCrossesEnabled")
+
         Task { await generateDailyPuzzle() }
     }
 
@@ -85,7 +91,7 @@ final class PuzzleViewModel: ObservableObject {
         startTimer()
     }
 
-    // MARK: - Cell Interaction
+    // MARK: - Cell Interaction (tap)
     func tapCell(row: Int, col: Int) {
         guard let engine else { return }
         Task {
@@ -94,15 +100,86 @@ final class PuzzleViewModel: ObservableObject {
             for change in changes {
                 board[change.row][change.col] = change.newState
             }
-            // allow undo for a single tap
-            pushUndoGroup([CellChange(row: row, col: col, newState: prev)])
 
-            // Only highlight conflicts + haptic, no toast message
+            var undoGroup: [CellChange] = [CellChange(row: row, col: col, newState: prev)]
+
+            // Auto-place crosses only when we *just placed* a queen
+            if board[row][col] == .queen, autoPlaceCrosses {
+                let size = gridSize
+                var crossPositions: [CellChange] = []
+
+                // Compute invalid cells purely in-memory using a copy of current board
+                let snapshot = board // safe local copy
+
+                for r in 0..<size {
+                    for c in 0..<size {
+                        // skip existing queens
+                        if snapshot[r][c] == .queen { continue }
+                        // skip already marked
+                        if snapshot[r][c] == .markedX { continue }
+
+                        // simulate placing queen temporarily in snapshot
+                        var temp = snapshot
+                        temp[r][c] = .queen
+
+                        // check constraints manually instead of mutating engine
+                        let rid = regionMap[r][c]
+                        var invalid = false
+
+                        // same row / col
+                        for i in 0..<size {
+                            if temp[r][i] == .queen, i != c { invalid = true; break }
+                            if temp[i][c] == .queen, i != r { invalid = true; break }
+                        }
+
+                        // region
+                        if !invalid {
+                            for rr in 0..<size where !invalid {
+                                for cc in 0..<size where regionMap[rr][cc] == rid && !(rr == r && cc == c) {
+                                    if temp[rr][cc] == .queen { invalid = true; break }
+                                }
+                            }
+                        }
+
+                        // adjacency
+                        if !invalid {
+                            for dr in -1...1 {
+                                for dc in -1...1 {
+                                    if dr == 0 && dc == 0 { continue }
+                                    let nr = r + dr
+                                    let nc = c + dc
+                                    if nr >= 0, nr < size, nc >= 0, nc < size, temp[nr][nc] == .queen {
+                                        invalid = true
+                                    }
+                                }
+                            }
+                        }
+
+                        if invalid {
+                            // only mark empty cells
+                            if board[r][c] == .empty {
+                                if let ch = await engine.setCell(.markedX, row: r, col: c) {
+                                    board[ch.row][ch.col] = ch.newState
+                                } else {
+                                    board[r][c] = .markedX
+                                }
+                                crossPositions.append(CellChange(row: r, col: c, newState: .empty))
+                            }
+                        }
+                    }
+                }
+
+                if !crossPositions.isEmpty {
+                    undoGroup.append(contentsOf: crossPositions)
+                }
+            }
+
+            pushUndoGroup(undoGroup)
+
+            // conflict highlight only
             if board[row][col] == .queen {
                 let conflicts = await engine.conflictTypesForQueen(at: row, col: col)
-                if !conflicts.isEmpty {
-                    Haptics.warning()
-                }
+                if !conflicts.isEmpty { Haptics.warning() }
             }
 
             await computeInvalidPositions()
@@ -131,13 +208,16 @@ final class PuzzleViewModel: ObservableObject {
     }
 
     // MARK: - Cross Setter (used for drag)
-    /// Sets a cross (.markedX) or clears it (.empty). Records undo.
+    /// Sets a cross (.markedX) or clears it (.empty) while ignoring queens.
+    /// Records undo only for modified cells.
     func setCross(row: Int, col: Int, state: CellState) {
         guard let engine else { return }
         Task {
-            // capture previous state for undo
+            // Skip if the cell currently has a queen — do not alter it
+            if board[row][col] == .queen { return }
+
             let previous = board[row][col]
-            // if no-op, skip
+            // Skip if no change
             if previous == state { return }
 
             if let change = await engine.setCell(state, row: row, col: col) {
@@ -146,7 +226,7 @@ final class PuzzleViewModel: ObservableObject {
                 board[row][col] = state
             }
 
-            // Build reverse change (to restore previous state on undo)
+            // Build reverse change for undo
             let reverse = CellChange(row: row, col: col, newState: previous)
 
             if var group = currentDragUndoGroup {

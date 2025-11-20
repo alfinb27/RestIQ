@@ -11,7 +11,6 @@ import SwiftUI
 @main
 struct RestIQApp: App {
     @State private var showLaunchScreen = true
-    @State private var preloadDone = false
 
     var body: some Scene {
         WindowGroup {
@@ -19,25 +18,26 @@ struct RestIQApp: App {
                 if showLaunchScreen {
                     LaunchScreenView()
                         .transition(.opacity)
-                        .onAppear {
-                            // Start puzzle pre-generation immediately
-                            Task.detached(priority: .background) {
-                                await preloadDailyPuzzles()
-                                await MainActor.run {
-                                    preloadDone = true
-                                }
-                            }
-
-                            // Fade out launch screen after preload or 2.5s minimum
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                                withAnimation(.easeOut(duration: 0.6)) {
-                                    showLaunchScreen = false
-                                }
-                            }
-                        }
                 } else {
                     HomeView()
                         .transition(.opacity)
+                }
+            }
+            .task {
+                do {
+                    // Run preloading and a minimum 2.5s delay concurrently.
+                    async let preload: () = preloadDailyPuzzles()
+                    async let minDuration: () = try Task.sleep(for: .seconds(2.5))
+
+                    // Await both tasks to complete before proceeding.
+                    _ = await (preload, minDuration)
+                } catch {
+                    // An error here is likely due to the task being cancelled.
+                    // It's safe to ignore and proceed to show the main view.
+                }
+                
+                withAnimation(.easeOut(duration: 0.6)) {
+                    showLaunchScreen = false
                 }
             }
         }
