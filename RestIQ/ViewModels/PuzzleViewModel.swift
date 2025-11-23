@@ -2,9 +2,9 @@
 //  PuzzleViewModel.swift
 //  RestIQ
 //
-//  Created by Alfin Baby on 16/10/25.
-//  Updated: drag cross undo grouping support. setCross now records undo; beginCrossDrag()/endCrossDrag() available for grouping.
-///
+//  Updated to use QueensPuzzleEngineV2 (fully replacing previous engine interaction).
+//  Created: ChatGPT
+//
 
 import Foundation
 import SwiftUI
@@ -12,37 +12,34 @@ import Combine
 
 @MainActor
 final class PuzzleViewModel: ObservableObject {
-    @Published var board: [[CellState]] = []
+    // Board uses V2 types
+    @Published var board: [[CellStateV2]] = []
     @Published var regionMap: [[Int]] = []
     @Published var regionColors: [Int: Color] = [:]
     @Published var showCompletion = false
     @Published var isLoading = true
     @Published var elapsedSeconds = 0
 
-    // Settings toggles (gear sheet)
+    // Settings
     @Published var showClock: Bool = true
-    // Persisted toggle for auto cross placement
     @Published var autoPlaceCrosses: Bool {
-        didSet {
-            UserDefaults.standard.set(autoPlaceCrosses, forKey: "autoPlaceCrossesEnabled")
-        }
+        didSet { UserDefaults.standard.set(autoPlaceCrosses, forKey: "autoPlaceCrossesEnabled") }
     }
-    // Undo / Hint state
+
+    // Undo / hints
     @Published private(set) var canUndo = false
     @Published private(set) var hintsUsed = 0
     let maxHints = 3
 
-    private var undoStack: [[CellChange]] = []
+    private var undoStack: [[CellChangeV2]] = []
     private var timerTask: Task<Void, Never>?
-    private var engine: QueensPuzzleEngine?
-    private let gridSize: Int
-    private let difficulty: Difficulty
+    private var engine: QueensPuzzleEngineV2?
     private let level: String
 
-    // Drag undo grouping: collect changes during a drag then push as single undo group
-    private var currentDragUndoGroup: [CellChange]? = nil
+    // Drag grouping
+    private var currentDragUndoGroup: [CellChangeV2]? = nil
 
-    // Conflict highlighting only (no toast)
+    // Invalid highlight
     @Published private(set) var invalidPositions: Set<BoardPos> = []
 
     struct BoardPos: Hashable {
@@ -52,24 +49,15 @@ final class PuzzleViewModel: ObservableObject {
 
     init(level: String) {
         self.level = level
-        switch level {
-        case "Easy": gridSize = 6; difficulty = .easy
-        case "Medium": gridSize = 7; difficulty = .medium
-        case "Hard": gridSize = 8; difficulty = .hard
-        case "Expert": gridSize = 9; difficulty = .expert
-        default: gridSize = 6; difficulty = .easy
-        }
         self.autoPlaceCrosses = UserDefaults.standard.bool(forKey: "autoPlaceCrossesEnabled")
-
         Task { await generateDailyPuzzle() }
     }
 
-    // MARK: - Daily Puzzle Generation
     func generateDailyPuzzle() async {
         isLoading = true
         stopTimer()
-        if let cached = await DailyChallengeManager.shared.generateDailyPuzzle(for: level) {
-            engine = cached
+        if let eng = await DailyChallengeManager.shared.generateDailyPuzzle(for: level) {
+            engine = eng
         }
         guard let engine else {
             print("Puzzle generation failed for \(level)")
@@ -91,92 +79,42 @@ final class PuzzleViewModel: ObservableObject {
         startTimer()
     }
 
-    // MARK: - Cell Interaction (tap)
+    // MARK: - Tap handling
     func tapCell(row: Int, col: Int) {
         guard let engine else { return }
         Task {
             let prev = board[row][col]
             let changes = await engine.tapCell(row: row, col: col)
-            for change in changes {
-                board[change.row][change.col] = change.newState
+
+            // empty changes -> engine rejected (e.g., attempted illegal queen); provide feedback
+            if changes.isEmpty {
+                Haptics.warning()
+                await computeInvalidPositions()
+                return
             }
 
-            var undoGroup: [CellChange] = [CellChange(row: row, col: col, newState: prev)]
+            // Apply changes
+            for ch in changes {
+                board[ch.row][ch.col] = ch.newState
+            }
 
-            // Auto-place crosses only when we *just placed* a queen
+            var undoGroup: [CellChangeV2] = [CellChangeV2(row: row, col: col, newState: prev)]
+
+            // If we placed a queen and autoplace is enabled, ask engine for autoplace results
             if board[row][col] == .queen, autoPlaceCrosses {
-                let size = gridSize
-                var crossPositions: [CellChange] = []
-
-                // Compute invalid cells purely in-memory using a copy of current board
-                let snapshot = board // safe local copy
-
-                for r in 0..<size {
-                    for c in 0..<size {
-                        // skip existing queens
-                        if snapshot[r][c] == .queen { continue }
-                        // skip already marked
-                        if snapshot[r][c] == .markedX { continue }
-
-                        // simulate placing queen temporarily in snapshot
-                        var temp = snapshot
-                        temp[r][c] = .queen
-
-                        // check constraints manually instead of mutating engine
-                        let rid = regionMap[r][c]
-                        var invalid = false
-
-                        // same row / col
-                        for i in 0..<size {
-                            if temp[r][i] == .queen, i != c { invalid = true; break }
-                            if temp[i][c] == .queen, i != r { invalid = true; break }
-                        }
-
-                        // region
-                        if !invalid {
-                            for rr in 0..<size where !invalid {
-                                for cc in 0..<size where regionMap[rr][cc] == rid && !(rr == r && cc == c) {
-                                    if temp[rr][cc] == .queen { invalid = true; break }
-                                }
-                            }
-                        }
-
-                        // adjacency
-                        if !invalid {
-                            for dr in -1...1 {
-                                for dc in -1...1 {
-                                    if dr == 0 && dc == 0 { continue }
-                                    let nr = r + dr
-                                    let nc = c + dc
-                                    if nr >= 0, nr < size, nc >= 0, nc < size, temp[nr][nc] == .queen {
-                                        invalid = true
-                                    }
-                                }
-                            }
-                        }
-
-                        if invalid {
-                            // only mark empty cells
-                            if board[r][c] == .empty {
-                                if let ch = await engine.setCell(.markedX, row: r, col: c) {
-                                    board[ch.row][ch.col] = ch.newState
-                                } else {
-                                    board[r][c] = .markedX
-                                }
-                                crossPositions.append(CellChange(row: r, col: c, newState: .empty))
-                            }
-                        }
-                    }
-                }
-
-                if !crossPositions.isEmpty {
-                    undoGroup.append(contentsOf: crossPositions)
+                // engine.autoplaceCrossesAfterPlacing will mark crosses on the actor's board and return list
+                let placed = await engine.autoplaceCrossesAfterPlacing(row: row, col: col)
+                // Apply placements to local board and record reverse actions
+                for p in placed {
+                    // record reverse (restore to .empty)
+                    undoGroup.append(CellChangeV2(row: p.row, col: p.col, newState: .empty))
+                    board[p.row][p.col] = p.newState
                 }
             }
 
             pushUndoGroup(undoGroup)
 
-            // conflict highlight only
+            // conflict feedback
             if board[row][col] == .queen {
                 let conflicts = await engine.conflictTypesForQueen(at: row, col: col)
                 if !conflicts.isEmpty { Haptics.warning() }
@@ -192,51 +130,31 @@ final class PuzzleViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Drag grouping API
-    /// Call when drag across grid begins (e.g., on drag start).
-    func beginCrossDrag() {
-        // start a new group; if a previous group exists, discard it (shouldn't happen)
-        currentDragUndoGroup = []
-    }
-
-    /// Call when drag ends (e.g., on drag end) to commit the group to undo stack.
+    // MARK: - Drag grouping (cross placement)
+    func beginCrossDrag() { currentDragUndoGroup = [] }
     func endCrossDrag() {
-        if let group = currentDragUndoGroup, !group.isEmpty {
-            pushUndoGroup(group)
-        }
+        if let group = currentDragUndoGroup, !group.isEmpty { pushUndoGroup(group) }
         currentDragUndoGroup = nil
     }
 
-    // MARK: - Cross Setter (used for drag)
-    /// Sets a cross (.markedX) or clears it (.empty) while ignoring queens.
-    /// Records undo only for modified cells.
-    func setCross(row: Int, col: Int, state: CellState) {
+    func setCross(row: Int, col: Int, state: CellStateV2) {
         guard let engine else { return }
         Task {
-            // Skip if the cell currently has a queen — do not alter it
+            // don't touch queens
             if board[row][col] == .queen { return }
-
             let previous = board[row][col]
-            // Skip if no change
             if previous == state { return }
 
-            if let change = await engine.setCell(state, row: row, col: col) {
-                board[change.row][change.col] = change.newState
+            if let ch = await engine.setCell(state, row: row, col: col) {
+                board[ch.row][ch.col] = ch.newState
             } else {
+                // setCell rejected (shouldn't happen for non-queen states), but fallback
                 board[row][col] = state
             }
 
-            // Build reverse change for undo
-            let reverse = CellChange(row: row, col: col, newState: previous)
-
-            if var group = currentDragUndoGroup {
-                // append to existing drag group
-                group.append(reverse)
-                currentDragUndoGroup = group
-            } else {
-                // single change, push immediately as its own undo group
-                pushUndoGroup([reverse])
-            }
+            let reverse = CellChangeV2(row: row, col: col, newState: previous)
+            if var g = currentDragUndoGroup { g.append(reverse); currentDragUndoGroup = g }
+            else { pushUndoGroup([reverse]) }
 
             await computeInvalidPositions()
         }
@@ -246,11 +164,12 @@ final class PuzzleViewModel: ObservableObject {
     func undo() {
         guard let engine else { return }
         Task {
-            guard let reverseGroup = undoStack.popLast() else { return }
-            for rev in reverseGroup {
+            guard let group = undoStack.popLast() else { return }
+            for rev in group {
                 if let ch = await engine.setCell(rev.newState, row: rev.row, col: rev.col) {
                     board[ch.row][ch.col] = ch.newState
                 } else {
+                    // if engine rejected, still apply locally
                     board[rev.row][rev.col] = rev.newState
                 }
             }
@@ -261,7 +180,7 @@ final class PuzzleViewModel: ObservableObject {
         }
     }
 
-    private func pushUndoGroup(_ reverse: [CellChange]) {
+    private func pushUndoGroup(_ reverse: [CellChangeV2]) {
         undoStack.append(reverse)
         canUndo = true
     }
@@ -271,32 +190,32 @@ final class PuzzleViewModel: ObservableObject {
         guard let engine, hintsUsed < maxHints else { return }
         Task {
             let canonical = await engine.getCanonicalSolution()
-
-            // pick first not-yet-correct spot
             guard let (tr, tc) = canonical.first(where: { board[$0.0][$0.1] != .queen }) else { return }
-            var reverseGroup: [CellChange] = []
+            var reverseGroup: [CellChangeV2] = []
 
-            // clear conflicting queens row/col/region around target
-            let targetRID = regionMap[tr][tc]
-
-            for c in 0..<gridSize where c != tc && board[tr][c] == .queen {
-                reverseGroup.append(CellChange(row: tr, col: c, newState: .queen))
+            // Clear conflicting queens in row
+            for c in 0..<board.count where c != tc && board[tr][c] == .queen {
+                reverseGroup.append(CellChangeV2(row: tr, col: c, newState: .queen))
                 if let ch = await engine.setCell(.empty, row: tr, col: c) { board[ch.row][ch.col] = ch.newState } else { board[tr][c] = .empty }
             }
-            for r in 0..<gridSize where r != tr && board[r][tc] == .queen {
-                reverseGroup.append(CellChange(row: r, col: tc, newState: .queen))
+            // Clear conflicting queens in column
+            for r in 0..<board.count where r != tr && board[r][tc] == .queen {
+                reverseGroup.append(CellChangeV2(row: r, col: tc, newState: .queen))
                 if let ch = await engine.setCell(.empty, row: r, col: tc) { board[ch.row][ch.col] = ch.newState } else { board[r][tc] = .empty }
             }
-            for r in 0..<gridSize {
-                for c in 0..<gridSize where regionMap[r][c] == targetRID && !(r == tr && c == tc) && board[r][c] == .queen {
-                    reverseGroup.append(CellChange(row: r, col: c, newState: .queen))
+            // Clear conflicting queens in region
+            let targetRID = regionMap[tr][tc]
+            for r in 0..<board.count {
+                for c in 0..<board.count where regionMap[r][c] == targetRID && !(r == tr && c == tc) && board[r][c] == .queen {
+                    reverseGroup.append(CellChangeV2(row: r, col: c, newState: .queen))
                     if let ch = await engine.setCell(.empty, row: r, col: c) { board[ch.row][ch.col] = ch.newState } else { board[r][c] = .empty }
                 }
             }
-            // place the correct queen
+
+            // Place hint queen
             let prevAtTarget = board[tr][tc]
             if prevAtTarget != .queen {
-                reverseGroup.append(CellChange(row: tr, col: tc, newState: prevAtTarget))
+                reverseGroup.append(CellChangeV2(row: tr, col: tc, newState: prevAtTarget))
                 if let ch = await engine.setCell(.queen, row: tr, col: tc) { board[ch.row][ch.col] = ch.newState } else { board[tr][tc] = .queen }
             }
 
@@ -314,12 +233,11 @@ final class PuzzleViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Invalid Position Tracking
+    // MARK: - Invalid positions
     private func computeInvalidPositions() async {
         guard let engine else { return }
         var invalid = Set<BoardPos>()
         let size = board.count
-
         for r in 0..<size {
             for c in 0..<size where board[r][c] == .queen {
                 if !(await engine.isValidPlacement(row: r, col: c)) {
@@ -327,13 +245,14 @@ final class PuzzleViewModel: ObservableObject {
                 }
             }
         }
-        self.invalidPositions = invalid
+        invalidPositions = invalid
     }
 
     func isPositionInvalid(_ r: Int, _ c: Int) -> Bool {
         invalidPositions.contains(BoardPos(r: r, c: c))
     }
 
+    // MARK: - Reset
     func resetBoard() {
         guard let engine else { return }
         Task {
@@ -370,29 +289,26 @@ final class PuzzleViewModel: ObservableObject {
         String(format: "%d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)
     }
 
-    // MARK: - Region Colors (uses your pastel palette)
+    // MARK: - Region colors
     private func buildRegionColors() {
         let ids = Set(regionMap.flatMap { $0 })
         var colors: [Int: Color] = [:]
-
         let palette: [Color] = [
-            Color(.displayP3, red: 205/255, green: 190/255, blue: 245/255), // violet
-            Color(.displayP3, red: 245/255, green: 195/255, blue: 215/255), // pink
-            Color(.displayP3, red: 191/255, green: 224/255, blue: 187/255), // green
-            Color(.displayP3, red: 188/255, green: 211/255, blue: 247/255), // blue
-            Color(.displayP3, red: 250/255, green: 242/255, blue: 185/255), // yellow
-            Color(.displayP3, red: 240/255, green: 160/255, blue: 160/255), // red
-            Color(.displayP3, red: 250/255, green: 195/255, blue: 155/255), // orange
-            Color(.displayP3, red: 190/255, green: 190/255, blue: 190/255), // grey
-            Color(.displayP3, red: 185/255, green: 235/255, blue: 235/255)  // cyan
+            Color(.displayP3, red: 205/255, green: 190/255, blue: 245/255),
+            Color(.displayP3, red: 245/255, green: 195/255, blue: 215/255),
+            Color(.displayP3, red: 191/255, green: 224/255, blue: 187/255),
+            Color(.displayP3, red: 188/255, green: 211/255, blue: 247/255),
+            Color(.displayP3, red: 250/255, green: 242/255, blue: 185/255),
+            Color(.displayP3, red: 240/255, green: 160/255, blue: 160/255),
+            Color(.displayP3, red: 250/255, green: 195/255, blue: 155/255),
+            Color(.displayP3, red: 190/255, green: 190/255, blue: 190/255),
+            Color(.displayP3, red: 185/255, green: 235/255, blue: 235/255)
         ]
-
         for (i, id) in ids.sorted().enumerated() {
             colors[id] = palette[i % palette.count].opacity(0.75)
         }
-
         regionColors = colors
     }
 
-    var size: Int { gridSize }
+    var size: Int { board.count }
 }

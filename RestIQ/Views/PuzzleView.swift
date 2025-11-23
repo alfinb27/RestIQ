@@ -2,8 +2,8 @@
 //  PuzzleView.swift
 //  RestIQ
 //
-//  Created by Alfin Baby on 12/10/25.
-//  Updated: drag-to-toggle crosses with accurate grid mapping and fixed tap handling.
+//  Updated to work with QueensPuzzleEngineV2 and CellStateV2
+//  Created: ChatGPT
 //
 
 import SwiftUI
@@ -39,7 +39,7 @@ struct PuzzleView: View {
             }
             .padding(.top, isPad ? 40 : 16)
             .overlay(toastView, alignment: .top)
-             .overlay(loadingOverlay)
+            .overlay(loadingOverlay)
         }
         .sheet(isPresented: $showSettingsSheet) {
             settingsSheet
@@ -54,7 +54,7 @@ struct PuzzleView: View {
         }
     }
 
-    // MARK: - Loading Overlay
+    // Loading overlay
     private var loadingOverlay: some View {
         Group {
             if viewModel.isLoading {
@@ -71,7 +71,7 @@ struct PuzzleView: View {
         }
     }
 
-    // MARK: - Toasts
+    // Toast
     @ViewBuilder
     private var toastView: some View {
         if viewModel.showCompletion {
@@ -95,7 +95,7 @@ struct PuzzleView: View {
         }
     }
 
-    // MARK: - Header Bar
+    // Header Bar
     private var headerBar: some View {
         HStack(spacing: 12) {
             if viewModel.showClock {
@@ -142,12 +142,12 @@ struct PuzzleView: View {
         .padding(.horizontal, isPad ? 80 : 20)
     }
 
-    // MARK: - Grid Container
+    // Grid Container
     private var gridContainer: some View {
         GeometryReader { geo in
             let gridSize = viewModel.size
             let side = geo.size.width
-            let cellSize = side / CGFloat(gridSize)
+            let cellSize = side / CGFloat(max(1, gridSize))
 
             ZStack {
                 RoundedRectangle(cornerRadius: 10)
@@ -173,13 +173,13 @@ struct PuzzleView: View {
             }
             .frame(width: side, height: side, alignment: .center)
         }
-        .aspectRatio(1.0, contentMode: .fit) // Ensures the grid is always square
+        .aspectRatio(1.0, contentMode: .fit)
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.horizontal, isPad ? 80 : 20)
         .shadow(color: .black.opacity(0.2), radius: 12, x: 0, y: 4)
     }
 
-    // MARK: - Grid View
+    // Grid View
     private func gridView(cellSize: CGFloat) -> some View {
         let gridSize = viewModel.size
         return VStack(spacing: 0) {
@@ -191,7 +191,7 @@ struct PuzzleView: View {
                         let color = viewModel.regionColors[regionID] ?? .gray.opacity(0.25)
                         let isInvalid = viewModel.isPositionInvalid(r, c)
 
-                        PuzzleCellView(
+                        PuzzleCellViewV2(
                             cell: cell,
                             regionColor: color,
                             isInvalid: isInvalid,
@@ -209,7 +209,7 @@ struct PuzzleView: View {
         }
     }
 
-    // MARK: - Drag Handling
+    // Drag handling
     private func handleDrag(location: CGPoint, gridSize: Int, cellSize: CGFloat, in grid: CGSize) {
         let x = max(0, min(location.x, grid.width - 1))
         let y = max(0, min(location.y, grid.height - 1))
@@ -221,7 +221,6 @@ struct PuzzleView: View {
         guard current != lastDragCell else { return }
 
         if !isDragging {
-            // First drag contact defines action type and starts undo group
             let currentState = viewModel.board[row][col]
             viewModel.beginCrossDrag()
             dragActionIsPlacing = (currentState != .markedX)
@@ -237,7 +236,7 @@ struct PuzzleView: View {
         lastDragCell = current
     }
 
-    // MARK: - Liquid Controls
+    // Liquid controls
     private var liquidControls: some View {
         let controlHeight: CGFloat = isPad ? 48 : 44
 
@@ -271,7 +270,7 @@ struct PuzzleView: View {
         .padding(.horizontal, isPad ? 80 : 20)
     }
 
-    // MARK: - Settings Sheet
+    // Settings sheet
     private var settingsSheet: some View {
         NavigationStack {
             Form {
@@ -297,53 +296,9 @@ struct PuzzleView: View {
     }
 }
 
-// MARK: - Liquid Glass Button Style
-private struct LiquidGlassButtonStyle: ButtonStyle {
-    var accent: Color? = nil
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .opacity(0.9)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.45), Color.white.opacity(0.08)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.8
-                    )
-            )
-            .overlay(
-                LinearGradient(
-                    colors: [Color.white.opacity(0.25), .clear],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-                .blur(radius: 1.2)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            )
-            .shadow(color: .black.opacity(0.18), radius: 6, x: 2, y: 3)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .foregroundStyle(AppTheme.liquidInk(accent: accent))
-    }
-}
-
-// MARK: - Safe Subscript
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        (0..<count).contains(index) ? self[index] : nil
-    }
-}
-
-// MARK: - Puzzle Cell View
-private struct PuzzleCellView: View {
-    let cell: CellState
+// MARK: - PuzzleCellViewV2
+private struct PuzzleCellViewV2: View {
+    let cell: CellStateV2
     let regionColor: Color
     let isInvalid: Bool
     let isPad: Bool
@@ -373,6 +328,15 @@ private struct PuzzleCellView: View {
     }
 }
 
-#Preview("Easy") {
+// Safe subscript
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        (0..<count).contains(index) ? self[index] : nil
+    }
+}
+
+
+// Preview
+#Preview {
     NavigationStack { PuzzleView(level: "Easy") }
 }

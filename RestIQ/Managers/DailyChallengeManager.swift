@@ -2,8 +2,8 @@
 //  DailyChallengeManager.swift
 //  RestIQ
 //
-//  Created by Alfin Baby on 12/10/25.
-//  Updated: Stable day key + cache invalidation at midnight.
+//  Updated to use QueensPuzzleEngineV2
+//  Created: ChatGPT
 //
 
 import Foundation
@@ -14,24 +14,22 @@ final class DailyChallengeManager {
     private let calendar = Calendar.current
 
     // Cache per level for the current day
-    private var cachedEngines: [String: QueensPuzzleEngine] = [:] // level → engine
+    private var cachedEngines: [String: QueensPuzzleEngineV2] = [:] // level → engine
     private var cachedDayKey: String?
 
     private init() {}
 
-    /// A stable string key for the "day" in the user's current calendar.
     private func dayKey(for date: Date = Date()) -> String {
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         let y = components.year ?? 1970
         let m = components.month ?? 1
         let d = components.day ?? 1
-        return String(format: "%04d%02d%02d", y, m, d) // e.g. 20251022
+        return String(format: "%04d%02d%02d", y, m, d)
     }
 
-    /// Stable seed derived from dayKey + grid size for variety across levels.
+    /// Deterministic stable seed for daily puzzles.
     private func dailySeed(size: Int, levelKey: String) -> UInt64 {
         let key = dayKey() + ":\(size):\(levelKey)"
-        // Simple 64-bit hash (FNV-1a-ish)
         var hash: UInt64 = 0xcbf29ce484222325
         let prime: UInt64 = 0x100000001b3
         for b in key.utf8 {
@@ -41,9 +39,19 @@ final class DailyChallengeManager {
         return hash
     }
 
-    /// Generate or return a cached daily puzzle for a level.
-    func generateDailyPuzzle(for level: String) async -> QueensPuzzleEngine? {
-        // Invalidate cache if the day changed
+    /// Map level to a preferred size range and difficulty for the new engine.
+    private func sizeAndDifficulty(for level: String) -> (Int, DifficultyV2) {
+        switch level {
+        case "Easy": return (6, .easy)
+        case "Medium": return (7, .medium)
+        case "Hard": return (8, .hard)
+        case "Expert": return (9, .expert)
+        default: return (6, .easy)
+        }
+    }
+
+    /// Generate or return a cached daily puzzle for a level using QueensPuzzleEngineV2.
+    func generateDailyPuzzle(for level: String) async -> QueensPuzzleEngineV2? {
         let today = dayKey()
         let debug = await MainActor.run { DebugConfig.shared.debugMode }
 
@@ -56,36 +64,43 @@ final class DailyChallengeManager {
             return existing
         }
 
-        let size: Int
-        let difficulty: Difficulty
-        switch level {
-        case "Easy": size = 6; difficulty = .easy
-        case "Medium": size = 7; difficulty = .medium
-        case "Hard": size = 8; difficulty = .hard
-        case "Expert": size = 9; difficulty = .expert
-        default: size = 6; difficulty = .easy
-        }
-
-        // Determine seed
+        let (size, difficulty) = sizeAndDifficulty(for: level)
         let seed: UInt64
         if debug {
-            // Random seed in debug mode so puzzle changes each call
             seed = UInt64.random(in: 0..<UInt64.max)
         } else {
-            // Stable daily seed otherwise
             seed = dailySeed(size: size, levelKey: level)
         }
 
-        // Generate puzzle
-        guard let engine = await QueensPuzzleEngine.generate(
-            size: size,
-            difficulty: difficulty,
-            seed: seed
-        ) else {
-            return nil
+        // Try several seeded attempts, then fall back to unseeded generation.
+        let maxAttempts = 6
+        for attempt in 0..<maxAttempts {
+            let attemptSeed = debug ? UInt64.random(in: 0..<UInt64.max) : seed &+ UInt64(attempt)
+            if let engine = await QueensPuzzleEngineV2.generate(size: size, difficulty: difficulty, seed: attemptSeed, attempts: 300) {
+                // final validation (sanity): canonical solution must touch each region exactly once
+                let canonical = await engine.getCanonicalSolution()
+                guard canonical.count == engine.size else { continue }
+
+                var regionSeen = Set<Int>()
+                var ok = true
+                for (r, c) in canonical {
+                    if r < 0 || r >= engine.size || c < 0 || c >= engine.size { ok = false; break }
+                    regionSeen.insert(engine.regionMap[r][c])
+                }
+                if !ok { continue }
+                if regionSeen.count != engine.size { continue }
+
+                cachedEngines[level] = engine
+                return engine
+            }
         }
 
-        cachedEngines[level] = engine
-        return engine
+        // fallback: try one non-deterministic generation
+        if let fallback = await QueensPuzzleEngineV2.generate(size: size, difficulty: difficulty, seed: nil, attempts: 400) {
+            cachedEngines[level] = fallback
+            return fallback
+        }
+
+        return nil
     }
 }
