@@ -24,18 +24,11 @@ struct RestIQApp: App {
                 }
             }
             .task {
-                do {
-                    // Run preloading and a minimum 2.5s delay concurrently.
-                    async let preload: () = preloadDailyPuzzles()
-                    async let minDuration: () = try Task.sleep(for: .seconds(2.5))
-
-                    // Await both tasks to complete before proceeding.
-                    _ = await (preload, minDuration)
-                } catch {
-                    // An error here is likely due to the task being cancelled.
-                    // It's safe to ignore and proceed to show the main view.
+                await withTaskGroup(of: Void.self) { group in
+                    group.addTask { await preloadDailyPuzzles() }
+                    group.addTask { try? await Task.sleep(for: .seconds(2.5)) }
+                    await group.waitForAll()
                 }
-                
                 withAnimation(.easeOut(duration: 0.6)) {
                     showLaunchScreen = false
                 }

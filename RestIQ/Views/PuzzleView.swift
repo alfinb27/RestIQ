@@ -2,8 +2,8 @@
 //  PuzzleView.swift
 //  RestIQ
 //
-//  Updated to work with QueensPuzzleEngineV2 and CellStateV2
-//  Created: ChatGPT
+//  Created by Alfin Baby on 12/10/25.
+//  Updated: drag-to-toggle crosses with accurate grid mapping and fixed tap handling.
 //
 
 import SwiftUI
@@ -12,6 +12,7 @@ import SwiftUI
 struct PuzzleView: View {
     let level: String
     @StateObject private var viewModel: PuzzleViewModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showSettingsSheet = false
 
     // Drag state
@@ -28,8 +29,16 @@ struct PuzzleView: View {
 
     var body: some View {
         ZStack {
-            AppBackground()
-                .ignoresSafeArea()
+            // Themed background
+            ZStack {
+                AppTheme.backgroundGradient(colorScheme)
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .opacity(AppTheme.backgroundMaterialOpacity(colorScheme))
+                    .blendMode(.overlay)
+            }
+            .blur(radius: 45)
+            .ignoresSafeArea()
 
             VStack(spacing: isPad ? 20 : 12) {
                 headerBar
@@ -54,7 +63,7 @@ struct PuzzleView: View {
         }
     }
 
-    // Loading overlay
+    // MARK: - Loading Overlay
     private var loadingOverlay: some View {
         Group {
             if viewModel.isLoading {
@@ -71,7 +80,7 @@ struct PuzzleView: View {
         }
     }
 
-    // Toast
+    // MARK: - Toasts
     @ViewBuilder
     private var toastView: some View {
         if viewModel.showCompletion {
@@ -95,14 +104,14 @@ struct PuzzleView: View {
         }
     }
 
-    // Header Bar
+    // MARK: - Header Bar
     private var headerBar: some View {
         HStack(spacing: 12) {
             if viewModel.showClock {
                 Label(viewModel.formattedElapsed(), systemImage: "clock")
                     .font(.system(size: isPad ? 22 : 16))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(AppTheme.liquidInk())
+                    .foregroundStyle(AppTheme.liquidInk(colorScheme))
             } else {
                 Spacer().frame(width: isPad ? 80 : 60)
             }
@@ -142,18 +151,19 @@ struct PuzzleView: View {
         .padding(.horizontal, isPad ? 80 : 20)
     }
 
-    // Grid Container
+    // MARK: - Grid Container
     private var gridContainer: some View {
         GeometryReader { geo in
             let gridSize = viewModel.size
-            let side = geo.size.width
-            let cellSize = side / CGFloat(max(1, gridSize))
+            let availableWidth = min(geo.size.width, UIScreen.main.bounds.width - (isPad ? 160 : 40))
+            let side = min(availableWidth, geo.size.height)
+            let cell = side / CGFloat(gridSize)
 
             ZStack {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(Color.black, lineWidth: isPad ? 10 : 8)
 
-                gridView(cellSize: cellSize)
+                gridView(cellSize: cell)
                     .frame(width: side, height: side)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .gesture(
@@ -161,25 +171,25 @@ struct PuzzleView: View {
                             .onChanged { value in
                                 handleDrag(location: value.location,
                                            gridSize: gridSize,
-                                           cellSize: cellSize,
-                                           in: geo.size)
+                                           cellSize: cell,
+                                           in: CGSize(width: side, height: side))
                             }
                             .onEnded { _ in
-                                viewModel.endCrossDrag()
                                 isDragging = false
                                 lastDragCell = nil
                             }
                     )
             }
             .frame(width: side, height: side, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, isPad ? 80 : 20)
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.4 : 0.1),
+                    radius: 12, x: 0, y: 4)
         }
-        .aspectRatio(1.0, contentMode: .fit)
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.horizontal, isPad ? 80 : 20)
-        .shadow(color: .black.opacity(0.2), radius: 12, x: 0, y: 4)
+        .frame(height: UIScreen.main.bounds.width - (isPad ? 160 : 40))
     }
 
-    // Grid View
+    // MARK: - Grid View
     private func gridView(cellSize: CGFloat) -> some View {
         let gridSize = viewModel.size
         return VStack(spacing: 0) {
@@ -191,7 +201,7 @@ struct PuzzleView: View {
                         let color = viewModel.regionColors[regionID] ?? .gray.opacity(0.25)
                         let isInvalid = viewModel.isPositionInvalid(r, c)
 
-                        PuzzleCellViewV2(
+                        PuzzleCellView(
                             cell: cell,
                             regionColor: color,
                             isInvalid: isInvalid,
@@ -209,7 +219,7 @@ struct PuzzleView: View {
         }
     }
 
-    // Drag handling
+    // MARK: - Drag Handling
     private func handleDrag(location: CGPoint, gridSize: Int, cellSize: CGFloat, in grid: CGSize) {
         let x = max(0, min(location.x, grid.width - 1))
         let y = max(0, min(location.y, grid.height - 1))
@@ -220,9 +230,8 @@ struct PuzzleView: View {
         let current = PuzzleViewModel.BoardPos(r: row, c: col)
         guard current != lastDragCell else { return }
 
+        let currentState = viewModel.board[row][col]
         if !isDragging {
-            let currentState = viewModel.board[row][col]
-            viewModel.beginCrossDrag()
             dragActionIsPlacing = (currentState != .markedX)
             isDragging = true
         }
@@ -236,7 +245,7 @@ struct PuzzleView: View {
         lastDragCell = current
     }
 
-    // Liquid controls
+    // MARK: - Liquid Controls
     private var liquidControls: some View {
         let controlHeight: CGFloat = isPad ? 48 : 44
 
@@ -270,7 +279,7 @@ struct PuzzleView: View {
         .padding(.horizontal, isPad ? 80 : 20)
     }
 
-    // Settings sheet
+    // MARK: - Settings Sheet
     private var settingsSheet: some View {
         NavigationStack {
             Form {
@@ -296,9 +305,55 @@ struct PuzzleView: View {
     }
 }
 
-// MARK: - PuzzleCellViewV2
-private struct PuzzleCellViewV2: View {
-    let cell: CellStateV2
+// MARK: - Liquid Glass Button Style
+struct LiquidGlassButtonStyle: ButtonStyle {
+    @Environment(\.colorScheme) private var colorScheme
+    var accent: Color? = nil
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.9)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.45), Color.white.opacity(0.08)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.8
+                    )
+            )
+            .overlay(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.25), .clear],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .blur(radius: 1.2)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            )
+            .shadow(color: .black.opacity(0.18), radius: 6, x: 2, y: 3)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .foregroundStyle(AppTheme.liquidInk(colorScheme, accent: accent))
+    }
+}
+
+// MARK: - Safe Subscript
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        (0..<count).contains(index) ? self[index] : nil
+    }
+}
+
+// MARK: - Puzzle Cell View
+private struct PuzzleCellView: View {
+    let cell: CellState
     let regionColor: Color
     let isInvalid: Bool
     let isPad: Bool
@@ -328,15 +383,6 @@ private struct PuzzleCellViewV2: View {
     }
 }
 
-// Safe subscript
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        (0..<count).contains(index) ? self[index] : nil
-    }
-}
-
-
-// Preview
-#Preview {
+#Preview("Easy") {
     NavigationStack { PuzzleView(level: "Easy") }
 }

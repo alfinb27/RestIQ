@@ -2,20 +2,23 @@
 //  HomeView.swift
 //  RestIQ
 //
-//  Created by Alfin Baby on 12/10/25.
-//  Updated: use AppTheme for background and gradients; all text/icons use purple tint in dark mode, orange in light.
+//  Updated: Expert lock driven by UserStatsManager, real streak display,
+//  completed-today indicator on level cards, paywall sheet for Expert.
 //
+
 import SwiftUI
 
 @available(iOS 18.0, *)
 struct HomeView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var vm = HomeViewModel()
     @State private var showUserDashboard = false
+    @State private var showExpertPaywall = false
 
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
-                AppBackground()
+                adaptiveBackground
                     .allowsHitTesting(false)
 
                 VStack(spacing: 8) {
@@ -43,11 +46,22 @@ struct HomeView: View {
                     .presentationDetents([.large])
                     .presentationCornerRadius(24)
             }
-            .toolbar(.hidden, for: .navigationBar)
+            .sheet(isPresented: $showExpertPaywall) {
+                ExpertPaywallView()
+                    .presentationDetents([.large])
+                    .presentationCornerRadius(24)
+            }
+            .navigationTitle("")
+            .navigationBarHidden(true)
+            .task {
+                // Restore purchases silently on launch
+                await PurchaseManager.shared.checkCurrentEntitlements()
+            }
         }
     }
 
-    // MARK: - Top Right Profile Button
+    // MARK: - Header Bar
+
     private var headerBar: some View {
         HStack {
             Spacer()
@@ -58,7 +72,7 @@ struct HomeView: View {
                 Image(systemName: "person")
                     .font(.system(size: 30))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(AppTheme.liquidInk()) // scheme-aware
+                    .foregroundStyle(AppTheme.liquidInk(colorScheme))
                     .background(
                         Circle()
                             .fill(.ultraThinMaterial)
@@ -70,16 +84,30 @@ struct HomeView: View {
         }
     }
 
+    // MARK: - Adaptive Background
+
+    private var adaptiveBackground: some View {
+        ZStack {
+            AppTheme.backgroundGradient(colorScheme)
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(AppTheme.backgroundMaterialOpacity(colorScheme))
+                .blendMode(.overlay)
+        }
+        .blur(radius: 45)
+        .ignoresSafeArea()
+    }
+
     // MARK: - Title Section
+
     private var titleSection: some View {
         VStack(alignment: .center, spacing: 6) {
             Text("RestIQ")
                 .font(.system(size: 50, weight: .bold, design: .rounded))
                 .multilineTextAlignment(.center)
-                .foregroundStyle(AppTheme.titleGradient()) // scheme-aware
-                .shadow(color: .white.opacity(0.1), radius: 8, x: 0, y: 2)
-                .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 3)
-
+                .foregroundStyle(AppTheme.titleGradient(colorScheme))
+                .shadow(color: .white.opacity(colorScheme == .light ? 0.25 : 0.1), radius: 8, x: 0, y: 2)
+                .shadow(color: .black.opacity(colorScheme == .light ? 0.15 : 0.5), radius: 4, x: 0, y: 3)
 
             Text("Daily puzzles to refresh your mind")
                 .font(.subheadline.weight(.medium))
@@ -92,24 +120,56 @@ struct HomeView: View {
     }
 
     // MARK: - Level Stack
+
     private var levelStack: some View {
         VStack(spacing: 16) {
             ForEach(vm.levels, id: \.self) { level in
-                NavigationLink(destination: PuzzleView(level: level)) {
-                    LevelCardLiquid(level: level, isLocked: false)
-                }
-                .buttonStyle(.plain)
+                levelCard(for: level)
             }
         }
         .padding(.vertical, 10)
     }
 
+    @ViewBuilder
+    private func levelCard(for level: String) -> some View {
+        let isExpert = level == "Expert"
+        let isLocked = isExpert && !vm.isExpertUnlocked
+        let completedToday = vm.hasCompletedToday(level)
+        let todayTime = vm.todayTime(for: level)
+
+        if isLocked {
+            Button {
+                Haptics.soft()
+                showExpertPaywall = true
+            } label: {
+                LevelCardLiquid(
+                    level: level,
+                    isLocked: true,
+                    completedToday: false,
+                    todayTime: nil
+                )
+            }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink(destination: PuzzleView(level: level)) {
+                LevelCardLiquid(
+                    level: level,
+                    isLocked: false,
+                    completedToday: completedToday,
+                    todayTime: todayTime
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     // MARK: - Footer Section
+
     private var footerSection: some View {
         VStack(spacing: 6) {
-            Text("Streak: \(vm.streak) days")
+            Text(vm.streak > 0 ? "🔥 \(vm.streak) day streak" : "Start your streak today")
                 .font(.footnote.weight(.medium))
-                .foregroundStyle(AppTheme.footerTextGradient()) // scheme-aware
+                .foregroundStyle(AppTheme.footerTextGradient(colorScheme))
             Text("Last Played: \(vm.lastPlayedDisplay)")
                 .font(.caption2)
                 .foregroundColor(.secondary)
