@@ -2,7 +2,8 @@
 //  PuzzleViewModel.swift
 //  RestIQ
 //
-//  Updated: records completion (time + hints) to UserStatsManager when puzzle is solved.
+//  Updated: auto-place crosses now works — marks X on all cells eliminated
+//  by a placed queen, and clears them when the queen is removed.
 //
 
 import Foundation
@@ -16,11 +17,16 @@ final class PuzzleViewModel: ObservableObject {
     @Published var regionColors: [Int: Color] = [:]
     @Published var showCompletion = false
     @Published var isLoading = true
+    @Published var generationFailed = false
     @Published var elapsedSeconds = 0
 
-    // Settings toggles (gear sheet)
-    @Published var showClock: Bool = true
-    @Published var autoPlaceCrosses: Bool = false
+    // Settings toggles — persisted to UserDefaults so they survive navigation and relaunch
+    @Published var showClock: Bool = UserDefaults.standard.object(forKey: "setting.showClock") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showClock, forKey: "setting.showClock") }
+    }
+    @Published var autoPlaceCrosses: Bool = UserDefaults.standard.bool(forKey: "setting.autoPlaceCrosses") {
+        didSet { UserDefaults.standard.set(autoPlaceCrosses, forKey: "setting.autoPlaceCrosses") }
+    }
 
     // Undo / Hint state
     @Published private(set) var canUndo = false
@@ -48,11 +54,11 @@ final class PuzzleViewModel: ObservableObject {
     init(level: String) {
         self.level = level
         switch level {
-        case "Easy": gridSize = 6; difficulty = .easy
+        case "Easy":   gridSize = 6; difficulty = .easy
         case "Medium": gridSize = 7; difficulty = .medium
-        case "Hard": gridSize = 8; difficulty = .hard
+        case "Hard":   gridSize = 8; difficulty = .hard
         case "Expert": gridSize = 9; difficulty = .expert
-        default: gridSize = 6; difficulty = .easy
+        default:       gridSize = 6; difficulty = .easy
         }
         Task { await generateDailyPuzzle() }
     }
@@ -61,6 +67,7 @@ final class PuzzleViewModel: ObservableObject {
 
     func generateDailyPuzzle() async {
         isLoading = true
+        generationFailed = false
         stopTimer()
         if let cached = await DailyChallengeManager.shared.generateDailyPuzzle(for: level) {
             engine = cached
@@ -68,6 +75,7 @@ final class PuzzleViewModel: ObservableObject {
         guard let engine else {
             print("Puzzle generation failed for \(level)")
             isLoading = false
+            generationFailed = true
             return
         }
 
@@ -81,7 +89,6 @@ final class PuzzleViewModel: ObservableObject {
         canUndo = false
         hintsUsed = 0
 
-        // Restore elapsed time if already completed today
         if let record = UserStatsManager.shared.completion(for: level) {
             elapsedSeconds = record.elapsedSeconds
             showCompletion = true
@@ -99,25 +106,108 @@ final class PuzzleViewModel: ObservableObject {
         guard let engine else { return }
         Task {
             let prev = board[row][col]
+
             let changes = await engine.tapCell(row: row, col: col)
-            for change in changes {
-                board[change.row][change.col] = change.newState
-            }
-            pushUndoGroup([CellChange(row: row, col: col, newState: prev)])
+            for change in changes { board[change.row][change.col] = change.newState }
+
+            var undoGroup = [CellChange(row: row, col: col, newState: prev)]
 
             if board[row][col] == .queen {
                 let conflicts = await engine.conflictTypesForQueen(at: row, col: col)
-                if !conflicts.isEmpty {
-                    Haptics.warning()
+                if !conflicts.isEmpty { Haptics.warning() }
+
+                if autoPlaceCrosses {
+                    let crosses = await placeCrossesAroundQueen(row: row, col: col, engine: engine)
+                    undoGroup.append(contentsOf: crosses)
+                }
+            } else if prev == .queen {
+                // Queen removed — clear auto-crosses that are no longer justified
+                if autoPlaceCrosses {
+                    let cleared = await clearCrossesForRemovedQueen(row: row, col: col, engine: engine)
+                    undoGroup.append(contentsOf: cleared)
                 }
             }
 
+            pushUndoGroup(undoGroup)
             await computeInvalidPositions()
 
             if await engine.checkIfSolved() {
                 handleSolved()
             }
         }
+    }
+
+    // MARK: - Auto-Cross Helpers
+
+    /// Marks X on every empty cell eliminated by a queen at (row, col).
+    /// Returns reverse changes (restore to .empty) for undo.
+    private func placeCrossesAroundQueen(row: Int, col: Int, engine: QueensPuzzleEngine) async -> [CellChange] {
+        var reverseChanges: [CellChange] = []
+        let regionID = regionMap[row][col]
+
+        for r in 0..<gridSize {
+            for c in 0..<gridSize {
+                guard board[r][c] == .empty else { continue }
+                guard !(r == row && c == col) else { continue }
+
+                let eliminated = r == row
+                    || c == col
+                    || regionMap[r][c] == regionID
+                    || (abs(r - row) <= 1 && abs(c - col) <= 1)
+
+                if eliminated {
+                    reverseChanges.append(CellChange(row: r, col: c, newState: .empty))
+                    if let ch = await engine.setCell(.markedX, row: r, col: c) {
+                        board[ch.row][ch.col] = ch.newState
+                    }
+                }
+            }
+        }
+        return reverseChanges
+    }
+
+    /// When a queen is removed, clears auto-placed X marks that are no longer
+    /// justified by any remaining queen on the board.
+    private func clearCrossesForRemovedQueen(row: Int, col: Int, engine: QueensPuzzleEngine) async -> [CellChange] {
+        var reverseChanges: [CellChange] = []
+        let regionID = regionMap[row][col]
+
+        for r in 0..<gridSize {
+            for c in 0..<gridSize {
+                guard board[r][c] == .markedX else { continue }
+
+                let affectedByRemovedQueen = r == row
+                    || c == col
+                    || regionMap[r][c] == regionID
+                    || (abs(r - row) <= 1 && abs(c - col) <= 1)
+
+                guard affectedByRemovedQueen else { continue }
+
+                if !isEliminatedByAnyQueen(r: r, c: c) {
+                    reverseChanges.append(CellChange(row: r, col: c, newState: .markedX))
+                    if let ch = await engine.setCell(.empty, row: r, col: c) {
+                        board[ch.row][ch.col] = ch.newState
+                    }
+                }
+            }
+        }
+        return reverseChanges
+    }
+
+    /// Returns true if any queen currently on the board eliminates cell (r, c).
+    private func isEliminatedByAnyQueen(r: Int, c: Int) -> Bool {
+        let regionID = regionMap[r][c]
+        for qr in 0..<gridSize {
+            for qc in 0..<gridSize {
+                guard board[qr][qc] == .queen else { continue }
+                if qr == r || qc == c
+                    || regionMap[qr][qc] == regionID
+                    || (abs(qr - r) <= 1 && abs(qc - c) <= 1) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     // MARK: - Drag Grouping
@@ -133,7 +223,7 @@ final class PuzzleViewModel: ObservableObject {
         currentDragUndoGroup = nil
     }
 
-    // MARK: - Cross Setter
+    // MARK: - Cross Setter (drag)
 
     func setCross(row: Int, col: Int, state: CellState) {
         guard let engine else { return }
@@ -191,10 +281,8 @@ final class PuzzleViewModel: ObservableObject {
         guard let engine, hintsUsed < maxHints else { return }
         Task {
             let canonical = await engine.getCanonicalSolution()
-
             guard let (tr, tc) = canonical.first(where: { board[$0.0][$0.1] != .queen }) else { return }
             var reverseGroup: [CellChange] = []
-
             let targetRID = regionMap[tr][tc]
 
             for c in 0..<gridSize where c != tc && board[tr][c] == .queen {
@@ -219,14 +307,10 @@ final class PuzzleViewModel: ObservableObject {
             }
 
             if !reverseGroup.isEmpty { pushUndoGroup(reverseGroup) }
-
             hintsUsed += 1
             Haptics.soft()
             await computeInvalidPositions()
-
-            if await engine.checkIfSolved() {
-                handleSolved()
-            }
+            if await engine.checkIfSolved() { handleSolved() }
         }
     }
 
@@ -236,7 +320,6 @@ final class PuzzleViewModel: ObservableObject {
         stopTimer()
         Haptics.success()
         showCompletion = true
-        // Record to persistent stats — this updates streak and completion history
         UserStatsManager.shared.recordCompletion(
             level: level,
             elapsedSeconds: elapsedSeconds,
@@ -249,10 +332,8 @@ final class PuzzleViewModel: ObservableObject {
     private func computeInvalidPositions() async {
         guard let engine else { return }
         var invalid = Set<BoardPos>()
-        let size = board.count
-
-        for r in 0..<size {
-            for c in 0..<size where board[r][c] == .queen {
+        for r in 0..<board.count {
+            for c in 0..<board.count where board[r][c] == .queen {
                 if !(await engine.isValidPlacement(row: r, col: c)) {
                     invalid.insert(BoardPos(r: r, c: c))
                 }
@@ -269,9 +350,7 @@ final class PuzzleViewModel: ObservableObject {
         guard let engine else { return }
         Task {
             let changes = await engine.resetBoard()
-            for ch in changes {
-                board[ch.row][ch.col] = ch.newState
-            }
+            for ch in changes { board[ch.row][ch.col] = ch.newState }
             elapsedSeconds = 0
             invalidPositions = []
             undoStack.removeAll()
