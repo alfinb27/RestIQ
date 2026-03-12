@@ -3,7 +3,7 @@
 //  RestIQ
 //
 //  Created by Alfin Baby on 12/10/25.
-//  Updated: Pre-generates all daily puzzles at launch in background to avoid load delay.
+//  Updated: Pre-generates all daily puzzles at launch using PuzzleRegistry.
 //
 
 import SwiftUI
@@ -36,9 +36,9 @@ struct RestIQApp: App {
         }
     }
 
-    /// Generates all puzzles for each level asynchronously so that they are cached before user plays.
+    /// Pre-generates all registered levels in parallel so puzzles are cached before the user taps a card.
     private func preloadDailyPuzzles() async {
-        let levels = ["Easy", "Medium", "Hard", "Expert"]
+        let levels = await PuzzleRegistry.shared.allLevels
         await withTaskGroup(of: Void.self) { group in
             for level in levels {
                 group.addTask {

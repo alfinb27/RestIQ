@@ -2,11 +2,18 @@
 //  PuzzleView.swift
 //  RestIQ
 //
-//  Created by Alfin Baby on 12/10/25.
-//  Updated: drag-to-toggle crosses with accurate grid mapping and fixed tap handling.
-//
 
 import SwiftUI
+
+// MARK: - HintCellRole
+// Describes how a cell should be visually treated when a hint is active.
+
+enum HintCellRole {
+    case forcedTarget    // Mode 1 — place your crown here (amber)
+    case regionContext   // Mode 2 — this region is locked to a line (teal)
+    case eliminateTarget // Mode 2 — mark this cell ✕ (red-orange)
+    case wrongMark       // Scenario B — you marked a correct cell ✕ (red)
+}
 
 @available(iOS 18.0, *)
 struct PuzzleView: View {
@@ -29,7 +36,6 @@ struct PuzzleView: View {
 
     var body: some View {
         ZStack {
-            // Themed background
             ZStack {
                 AppTheme.backgroundGradient(colorScheme)
                 Rectangle()
@@ -40,20 +46,39 @@ struct PuzzleView: View {
             .blur(radius: 45)
             .ignoresSafeArea()
 
-            VStack(spacing: isPad ? 20 : 12) {
-                headerBar
-                gridContainer
-                liquidControls
-                Spacer(minLength: isPad ? 40 : 16)
+            ScrollView {
+                VStack(spacing: isPad ? 20 : 12) {
+                    headerBar
+                    gridContainer
+                    liquidControls
+                    HowToPlayAccordion(
+                        activeHint: viewModel.activeHint,
+                        onShowMe: { viewModel.applyShowMe() }
+                    )
+                    .frame(maxWidth: isPad ? 720 : .infinity)
+                    .padding(.horizontal, isPad ? 80 : 20)
+                    Spacer(minLength: isPad ? 40 : 16)
+                }
+                .padding(.top, isPad ? 40 : 16)
             }
-            .padding(.top, isPad ? 40 : 16)
-            .overlay(toastView, alignment: .top)
+            .scrollBounceBehavior(.basedOnSize)
             .overlay(loadingOverlay)
         }
         .sheet(isPresented: $showSettingsSheet) {
             settingsSheet
                 .presentationDetents([.medium, .large])
                 .presentationCornerRadius(20)
+        }
+        .navigationDestination(isPresented: $viewModel.showCompletion) {
+            PuzzleCompleteView(
+                level: level,
+                elapsedSeconds: viewModel.elapsedSeconds,
+                hintsUsed: viewModel.hintsUsed,
+                board: viewModel.board,
+                regionMap: viewModel.regionMap,
+                regionColors: viewModel.regionColors,
+                size: viewModel.size
+            )
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -64,6 +89,7 @@ struct PuzzleView: View {
     }
 
     // MARK: - Loading Overlay
+
     private var loadingOverlay: some View {
         Group {
             if viewModel.isLoading {
@@ -76,35 +102,34 @@ struct PuzzleView: View {
                             .foregroundColor(.secondary)
                     }
                 }
-            }
-        }
-    }
-
-    // MARK: - Toasts
-    @ViewBuilder
-    private var toastView: some View {
-        if viewModel.showCompletion {
-            VStack {
-                HStack {
-                    Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
-                    Text("Puzzle Completed!").font(.headline)
-                    Spacer()
-                    Text(viewModel.formattedElapsed())
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+            } else if viewModel.generationFailed {
+                ZStack {
+                    Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 40))
+                            .foregroundStyle(AppTheme.liquidInk(colorScheme))
+                        Text("Couldn't load puzzle")
+                            .font(.headline)
+                        Text("This can happen on slower devices.\nTap below to try again.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Try Again") {
+                            Haptics.soft()
+                            Task { await viewModel.generateDailyPuzzle() }
+                        }
+                        .buttonStyle(LiquidGlassButtonStyle())
+                        .padding(.top, 4)
+                    }
+                    .padding(32)
                 }
-                .padding()
-                .background(.thinMaterial)
-                .cornerRadius(14)
-                .shadow(radius: 7)
-                .padding(.top, 32)
-                .padding(.horizontal, 32)
             }
-            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
     // MARK: - Header Bar
+
     private var headerBar: some View {
         HStack(spacing: 12) {
             if viewModel.showClock {
@@ -138,20 +163,15 @@ struct PuzzleView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-        )
+        .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.08), lineWidth: 0.5))
         .shadow(radius: 3)
         .frame(maxWidth: isPad ? 720 : .infinity)
         .padding(.horizontal, isPad ? 80 : 20)
     }
 
     // MARK: - Grid Container
+
     private var gridContainer: some View {
         GeometryReader { geo in
             let gridSize = viewModel.size
@@ -166,6 +186,7 @@ struct PuzzleView: View {
                 gridView(cellSize: cell)
                     .frame(width: side, height: side)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .allowsHitTesting(!viewModel.showCompletion)
                     .gesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
@@ -177,6 +198,7 @@ struct PuzzleView: View {
                             .onEnded { _ in
                                 isDragging = false
                                 lastDragCell = nil
+                                viewModel.endCrossDrag()
                             }
                     )
             }
@@ -190,28 +212,29 @@ struct PuzzleView: View {
     }
 
     // MARK: - Grid View
+
     private func gridView(cellSize: CGFloat) -> some View {
         let gridSize = viewModel.size
         return VStack(spacing: 0) {
             ForEach(0..<gridSize, id: \.self) { r in
                 HStack(spacing: 0) {
                     ForEach(0..<gridSize, id: \.self) { c in
-                        let cell = viewModel.board[safe: r]?[safe: c] ?? .empty
-                        let regionID = viewModel.regionMap[safe: r]?[safe: c] ?? 0
-                        let color = viewModel.regionColors[regionID] ?? .gray.opacity(0.25)
+                        let cell      = viewModel.board[safe: r]?[safe: c] ?? .empty
+                        let regionID  = viewModel.regionMap[safe: r]?[safe: c] ?? 0
+                        let color     = viewModel.regionColors[regionID] ?? .gray.opacity(0.25)
                         let isInvalid = viewModel.isPositionInvalid(r, c)
+                        let role      = hintRole(row: r, col: c)
 
                         PuzzleCellView(
                             cell: cell,
                             regionColor: color,
                             isInvalid: isInvalid,
+                            hintRole: role,
                             isPad: isPad
                         )
                         .frame(width: cellSize, height: cellSize)
                         .contentShape(Rectangle())
-                        .onTapGesture {
-                            viewModel.tapCell(row: r, col: c)
-                        }
+                        .onTapGesture { viewModel.tapCell(row: r, col: c) }
                         .overlay(Rectangle().stroke(Color.black.opacity(0.25), lineWidth: 0.6))
                     }
                 }
@@ -219,7 +242,26 @@ struct PuzzleView: View {
         }
     }
 
+    // Returns the hint role for a cell, given the current activeHint.
+    private func hintRole(row: Int, col: Int) -> HintCellRole? {
+        guard let hint = viewModel.activeHint else { return nil }
+        switch hint.mode {
+        case .forcedPlacement(let r, let c):
+            return (r == row && c == col) ? .forcedTarget : nil
+        case .wrongMark(let r, let c):
+            return (r == row && c == col) ? .wrongMark : nil
+        case .elimination(let regionCells, let elimCells):
+            let coord = GridCoord(row: row, col: col)
+            if elimCells.contains(coord)   { return .eliminateTarget }
+            if regionCells.contains(coord) { return .regionContext }
+            return nil
+        case .noHint:
+            return nil  // no cell highlighting for this state
+        }
+    }
+
     // MARK: - Drag Handling
+
     private func handleDrag(location: CGPoint, gridSize: Int, cellSize: CGFloat, in grid: CGSize) {
         let x = max(0, min(location.x, grid.width - 1))
         let y = max(0, min(location.y, grid.height - 1))
@@ -230,10 +272,10 @@ struct PuzzleView: View {
         let current = PuzzleViewModel.BoardPos(r: row, c: col)
         guard current != lastDragCell else { return }
 
-        let currentState = viewModel.board[row][col]
         if !isDragging {
-            dragActionIsPlacing = (currentState != .markedX)
+            dragActionIsPlacing = (viewModel.board[row][col] != .markedX)
             isDragging = true
+            viewModel.beginCrossDrag()
         }
 
         if dragActionIsPlacing {
@@ -246,8 +288,10 @@ struct PuzzleView: View {
     }
 
     // MARK: - Liquid Controls
+
     private var liquidControls: some View {
         let controlHeight: CGFloat = isPad ? 48 : 44
+        let cooldown = viewModel.hintCooldownRemaining
 
         return HStack(spacing: 14) {
             Button {
@@ -260,26 +304,30 @@ struct PuzzleView: View {
             }
             .buttonStyle(LiquidGlassButtonStyle())
             .frame(height: controlHeight)
-            .disabled(!viewModel.canUndo)
+            .disabled(!viewModel.canUndo || viewModel.showCompletion)
 
             Button {
-                Haptics.light()
                 viewModel.revealHint()
             } label: {
-                Label("Hint \(viewModel.hintsUsed)/\(viewModel.maxHints)", systemImage: "lightbulb")
-                    .font(.system(size: isPad ? 18 : 16, weight: .semibold))
-                    .frame(maxWidth: .infinity)
+                HStack(spacing: 6) {
+                    Image(systemName: cooldown > 0 ? "hourglass" : "lightbulb")
+                        .font(.system(size: isPad ? 18 : 16, weight: .semibold))
+                        .symbolEffect(.pulse, isActive: cooldown > 0)
+                    Text(cooldown > 0 ? "Hint in \(cooldown)s" : "Hint (\(viewModel.hintsUsed) used)")
+                        .font(.system(size: isPad ? 18 : 16, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity)
             }
             .buttonStyle(LiquidGlassButtonStyle())
             .frame(height: controlHeight)
-            .disabled(viewModel.hintsUsed >= viewModel.maxHints || viewModel.isLoading)
+            .disabled(cooldown > 0 || viewModel.activeHint != nil || viewModel.isLoading || viewModel.showCompletion)
         }
-        .padding(.bottom, 120)
         .frame(maxWidth: isPad ? 720 : .infinity)
         .padding(.horizontal, isPad ? 80 : 20)
     }
 
     // MARK: - Settings Sheet
+
     private var settingsSheet: some View {
         NavigationStack {
             Form {
@@ -305,62 +353,33 @@ struct PuzzleView: View {
     }
 }
 
-// MARK: - Liquid Glass Button Style
-struct LiquidGlassButtonStyle: ButtonStyle {
-    @Environment(\.colorScheme) private var colorScheme
-    var accent: Color? = nil
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .opacity(0.9)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.45), Color.white.opacity(0.08)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.8
-                    )
-            )
-            .overlay(
-                LinearGradient(
-                    colors: [Color.white.opacity(0.25), .clear],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .blur(radius: 1.2)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            )
-            .shadow(color: .black.opacity(0.18), radius: 6, x: 2, y: 3)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .foregroundStyle(AppTheme.liquidInk(colorScheme, accent: accent))
-    }
-}
-
 // MARK: - Safe Subscript
-private extension Array {
+
+extension Array {
     subscript(safe index: Int) -> Element? {
         (0..<count).contains(index) ? self[index] : nil
     }
 }
 
 // MARK: - Puzzle Cell View
-private struct PuzzleCellView: View {
+
+struct PuzzleCellView: View {
     let cell: CellState
     let regionColor: Color
     let isInvalid: Bool
+    let hintRole: HintCellRole?
     let isPad: Bool
 
     var body: some View {
         ZStack {
             Rectangle().fill(regionColor)
+
+            // Hint overlay — very faint tint so region colour stays legible.
+            // The border carries the visual weight; the fill is just a subtle wash.
+            if let role = hintRole {
+                Rectangle().fill(overlayColor(for: role))
+            }
+
             switch cell {
             case .queen:
                 Image(systemName: "crown.fill")
@@ -376,10 +395,41 @@ private struct PuzzleCellView: View {
                 EmptyView()
             }
         }
+        // Inset the hint border slightly so it doesn't bleed into the grid lines
         .overlay(
             Rectangle()
-                .stroke(isInvalid ? Color.red : .clear, lineWidth: isInvalid ? 2 : 0)
+                .inset(by: borderWidth() > 0 ? 1 : 0)
+                .stroke(borderColor(), lineWidth: borderWidth())
         )
+    }
+
+    private func overlayColor(for role: HintCellRole) -> Color {
+        switch role {
+        case .forcedTarget:    return Color.orange.opacity(0.12)
+        case .regionContext:   return Color.teal.opacity(0.10)
+        case .eliminateTarget: return Color.red.opacity(0.12)
+        case .wrongMark:       return Color.red.opacity(0.14)
+        }
+    }
+
+    private func borderColor() -> Color {
+        if isInvalid { return .red }
+        switch hintRole {
+        case .forcedTarget:    return Color.orange
+        case .regionContext:   return Color.teal
+        case .eliminateTarget: return Color.red
+        case .wrongMark:       return Color.red
+        case nil:              return .clear
+        }
+    }
+
+    private func borderWidth() -> CGFloat {
+        guard !isInvalid else { return 2 }
+        switch hintRole {
+        case .forcedTarget, .eliminateTarget, .wrongMark: return 3
+        case .regionContext:                               return 2
+        case nil:                                         return 0
+        }
     }
 }
 

@@ -123,7 +123,7 @@ struct HomeView: View {
 
     private var levelStack: some View {
         VStack(spacing: 16) {
-            ForEach(vm.levels, id: \.self) { level in
+            ForEach(vm.levels) { level in
                 levelCard(for: level)
             }
         }
@@ -131,11 +131,10 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private func levelCard(for level: String) -> some View {
-        let isExpert = level == "Expert"
-        let isLocked = isExpert && !vm.isExpertUnlocked
-        let completedToday = vm.hasCompletedToday(level)
-        let todayTime = vm.todayTime(for: level)
+    private func levelCard(for level: LevelConfig) -> some View {
+        let isLocked       = level.requiresPurchase && !vm.isExpertUnlocked
+        let completedToday = vm.hasCompletedToday(level.id)
+        let todayTime      = vm.todayTime(for: level.id)
 
         if isLocked {
             Button {
@@ -143,7 +142,7 @@ struct HomeView: View {
                 showExpertPaywall = true
             } label: {
                 LevelCardLiquid(
-                    level: level,
+                    level: level.displayName,
                     isLocked: true,
                     completedToday: false,
                     todayTime: nil
@@ -151,9 +150,9 @@ struct HomeView: View {
             }
             .buttonStyle(.plain)
         } else {
-            NavigationLink(destination: PuzzleView(level: level)) {
+            NavigationLink(destination: PuzzleView(level: level.displayName)) {
                 LevelCardLiquid(
-                    level: level,
+                    level: level.displayName,
                     isLocked: false,
                     completedToday: completedToday,
                     todayTime: todayTime

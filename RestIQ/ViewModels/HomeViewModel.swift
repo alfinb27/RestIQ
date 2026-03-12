@@ -12,7 +12,9 @@ import Combine
 
 @MainActor
 final class HomeViewModel: ObservableObject {
-    let levels: [String] = ["Easy", "Medium", "Hard", "Expert"]
+    // Level list comes from the registry — adding a new puzzle type automatically
+    // appears here without touching this file.
+    var levels: [LevelConfig] { PuzzleRegistry.shared.allLevels }
 
     private let stats = UserStatsManager.shared
     private var cancellables = Set<AnyCancellable>()
@@ -49,14 +51,14 @@ final class HomeViewModel: ObservableObject {
         return formatter.string(from: date)
     }
 
-    /// True if the given level has already been completed today.
-    func hasCompletedToday(_ level: String) -> Bool {
-        stats.hasCompletedToday(level: level)
+    /// True if the given level (by stable ID e.g. "queens.Expert") has been completed today.
+    func hasCompletedToday(_ levelID: String) -> Bool {
+        stats.hasCompletedToday(level: levelID)
     }
 
     /// Best time for a level today, formatted as m:ss. Nil if not completed today.
-    func todayTime(for level: String) -> String? {
-        guard let record = stats.completion(for: level) else { return nil }
+    func todayTime(for levelID: String) -> String? {
+        guard let record = stats.completion(for: levelID) else { return nil }
         let m = record.elapsedSeconds / 60
         let s = record.elapsedSeconds % 60
         return String(format: "%d:%02d", m, s)
